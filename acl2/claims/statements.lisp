@@ -167,6 +167,24 @@
        (emil-limits-p (delete-text tx sx sy ex ey) imax))
   (adjust-no-overflow-p x y sx sy ex ey t imax))
 
+;; The owner asked for these two alongside the guard (they don't replace it).
+
+;; The guard can be met. A concrete witness: the point and the edit are all at (0,0), at
+;; C's real INT_MAX.
+(defclaim no-overflow-predicate-is-satisfiable ()
+  t
+  (adjust-no-overflow-p 0 0 0 0 0 0 nil 2147483647))
+
+;; A readable sufficient bound: if all six numbers are from 0 to IMAX/2, nothing overflows.
+;; It's only sufficient. Emil's legal inputs can exceed it.
+(defclaim half-range-cannot-overflow (x y sx sy ex ey del imax)
+  (and (natp imax)
+       (natp x) (natp y) (natp sx) (natp sy) (natp ex) (natp ey)
+       (<= (* 2 x) imax) (<= (* 2 y) imax)
+       (<= (* 2 sx) imax) (<= (* 2 sy) imax)
+       (<= (* 2 ex) imax) (<= (* 2 ey) imax))
+  (adjust-no-overflow-p x y sx sy ex ey del imax))
+
 ;; ------------------ Executable check on a small domain ------------------
 
 (program)
@@ -256,11 +274,34 @@
       (check-texts (cdr txs) inss imaxs
                    (check-starts (car txs) ps ps inss imaxs tally)))))
 
+;; All combinations for the sufficient bound, independent of any text
+(defun check-half-range (x-list imax del tally)
+  (if (endp x-list) tally
+    (let* ((v (car x-list)))
+      (check-half-range (cdr x-list) imax del
+        (note 'half-range-cannot-overflow
+              (half-range-cannot-overflow (nth 0 v) (nth 1 v) (nth 2 v) (nth 3 v) (nth 4 v) (nth 5 v) del imax)
+              tally)))))
+
 (defun check-all ()
   (check-texts (fill-shapes (shapes 3 3) 1)         ; up to 3 lines of up to 2 chars
                (fill-shapes (shapes 2 3) 100)       ; inserted text: 2 lines, 2 chars
                (list 2147483647 4)                  ; real INT_MAX and a tight small one
-               nil))
+               (let* ((tally (note 'no-overflow-predicate-is-satisfiable
+                                   (no-overflow-predicate-is-satisfiable) nil))
+                      ;; 0..3 in all six places: IMAX 7 and 6 sit at the bound, and IMAX 5
+                      ;; leaves 3 outside the hypothesis
+                      (vs (shapes-n 6 4))
+                      (tally (check-half-range vs 7 nil tally))
+                      (tally (check-half-range vs 7 t tally))
+                      (tally (check-half-range vs 6 nil tally))
+                      (tally (check-half-range vs 6 t tally))
+                      (tally (check-half-range vs 5 t tally))
+                      ;; IMAX 3 allows only 0 and 1, so the values 2 and 3 can expose a
+                      ;; hypothesis that's too loose
+                      (tally (check-half-range vs 3 nil tally))
+                      (tally (check-half-range vs 3 t tally)))
+                 tally)))
 
 (logic)
 
@@ -269,7 +310,7 @@
 (make-event
  (let ((tally (check-all)))
    (prog2$ (cw "~%STATEMENT-CHECK ~x0~%" tally)
-           (if (and (equal (len tally) 15)
+           (if (and (equal (len tally) 17)
                     (not (member-equal 0 (strip-cars (strip-cdrs tally)))))
                '(value-triple :statements-checked)
              (er hard? 'statements "A claim's hypotheses were never satisfied: ~x0" tally)))))
