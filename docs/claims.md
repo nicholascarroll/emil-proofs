@@ -6,13 +6,13 @@ Milestone 1 domain. **Nothing is proved yet.** Full statements are in `docs/m2-c
 | Claim | Formal theorem | Evidence | Assumptions | Owner review |
 |---|---|---|---|---|
 | Edit hypothesis at emil's call sites | Not a theorem: `docs/m2-call-sites.md` | Read at all 51 sites, no violation in about 2 million checked calls | Most sites rely on the cursor invariant or undo history | Awaiting |
-| 1. Character preservation | `insert-keeps-character-before`, `insert-keeps-character-after`, `delete-keeps-character-before`, `delete-keeps-character-after` | Tested | Valid text, point and ordered edit. Model differences in `docs/m2-claims.md` | Awaiting |
-| 2. Exact boundaries | `insert-at-point-stays-before`, `delete-at-start-stays`, `delete-inside-clamps`, `delete-at-end-clamps-but-keeps-character`, `delete-return-is-exact`, `empty-insert-changes-nothing`, `empty-delete-changes-nothing` | Tested | As above | Awaiting |
-| 3. Validity | `insert-keeps-point-valid`, `delete-keeps-point-valid` | Tested | As above. False hypothesis for stale window points | Awaiting |
-| 4a. No overflow in the generated functions | Guard verification with `adjust-no-overflow-p` | Exactness tested on 1,062,882 corner cases | ATC's 32-bit two's complement model. Hypothesis is the guard | Awaiting |
-| 4b. Valid edits within emil's limits can't overflow | `insert-within-limits-cannot-overflow`, `delete-within-limits-cannot-overflow` | Tested, including at a tight small `IMAX` | Row limits before and after, enforced by `abort()` in emil, by reading | Awaiting |
-| 4c. The predicate can be met, and a simple bound implies it | `no-overflow-predicate-is-satisfiable`, `half-range-cannot-overflow` | Tested, and a loosened hypothesis was caught | None for satisfiability. All six numbers from 0 to `IMAX/2` for the bound | Awaiting |
-| S1. Generated functions equal the spec | To be written in Milestone 3 | None yet | Guard | Awaiting |
+| 1. Character preservation | `insert-keeps-character-before`, `insert-keeps-character-after`, `delete-keeps-character-before`, `delete-keeps-character-after` | Tested | Valid text, point and ordered edit. Model differences in `docs/m2-claims.md` | Approved |
+| 2. Exact boundaries | `insert-at-point-stays-before`, `delete-at-start-stays`, `delete-inside-clamps`, `delete-at-end-clamps-but-keeps-character`, `delete-return-is-exact`, `empty-insert-changes-nothing`, `empty-delete-changes-nothing` | Tested | As above | Approved |
+| 3. Validity | `insert-keeps-point-valid`, `delete-keeps-point-valid` | Tested | As above. False hypothesis for stale window points | Approved |
+| 4a. No overflow in the generated functions | Guard verification with `adjust-no-overflow-p` | Exactness tested on 1,062,882 corner cases | ATC's 32-bit two's complement model. Hypothesis is the guard | Approved |
+| 4b. Valid edits within emil's limits can't overflow | `insert-within-limits-cannot-overflow`, `delete-within-limits-cannot-overflow` | Tested, including at a tight small `IMAX` | Row limits before and after, enforced by `abort()` in emil, by reading | Approved |
+| 4c. The predicate can be met, and a simple bound implies it | `no-overflow-predicate-is-satisfiable`, `half-range-cannot-overflow` | Tested, and a loosened hypothesis was caught | None for satisfiability. All six numbers from 0 to `IMAX/2` for the bound | Approved |
+| S1. Generated functions equal the spec | To be written in Milestone 3 | None yet | Guard | Approved |
 | Baseline: emil's C matches the text model | Not a theorem: `tests/m1/harness.c` | Tested on 86,376,860 cases, and 26,156,483,150 at 5x5 | That domain only | Awaiting |
 
 ## Decisions
@@ -33,3 +33,5 @@ Milestone 1 domain. **Nothing is proved yet.** Full statements are in `docs/m2-c
 | 2026-11-06 | **emil does not guarantee valid points in all windows.** Reproduced by `tests/m2/stale_window.c`: after a revert to a shorter file, another window's point stays at (20,0) on a row of size 2, and later edits keep adjusting it. `tests/m2/stale_kill.c` reproduces a second path through `killBuffer`, and emil's fuzzer saw 636 stale points with no revert. Stale points are outside every claim. Milestone 4 tests that the generated C agrees with emil on them. Logged as defect D2, not fixed. | All claims | Approved by owner |
 | 2026-11-06 | `adjustPoint`'s return value is unused. Logged as refactor candidate R1, not changed. | Emil | Approved by owner |
 | 2026-11-06 | Supporting evidence only: parsing the generated C with C$ matches `*program*` for this output. Not proof of the printer. | `*program*` to C file step | Recorded per owner request |
+| 2026-11-06 | All 15 statements and the two additions approved. Condition: Milestone 3 must also prove the generated C functions match `adjust-spec`, or report where that link stops. | Claims 1 to 4, S1 | Approved by owner |
+| 2026-11-06 | Pin recheck at the start of Milestone 3: pin kept. One later commit, `aba876cf`, has reader fixes for `#f`, `#u` and `#d` and an input-clearing fix. It isn't labelled a soundness fix and touches no ATC or C model files. | Whole project | Reported to owner |
