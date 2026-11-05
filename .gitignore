@@ -1,0 +1,16 @@
+# Never commit toolchains or ACL2 build output
+*.cert
+*.port
+*.out
+*.cert.out
+*.date
+*.lx64fsl
+*.fasl
+*.o
+*.a
+*.bin
+*.time
+*.dx64fsl
+.sys/
+logs/*.log
+build/
