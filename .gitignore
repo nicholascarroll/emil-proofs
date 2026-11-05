@@ -14,3 +14,4 @@
 .sys/
 logs/*.log
 build/
+Makefile-tmp
