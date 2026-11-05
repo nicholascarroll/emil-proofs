@@ -28,12 +28,18 @@ The full brief is in `docs/brief.md`. Current state and next step are in
 - Run long certification in the background, logging to a file. Don't assume a
   background job survives once a reply ends.
 - Don't commit large toolchains or build output.
-- A theorem may not rely on `skip-proofs`, `defaxiom`, trust tags, uncertified
-  books or fast-cert. Certify from clean with a single script, which fails if
-  any appear. If one seems necessary, stop and ask.
-- Owner-approved exception (2026-11-06): books that run ATC may use exactly the
-  trust tags in `scripts/atc-allowed-ttags.txt`, because ATC requires them. Spec
-  and claim books stay tag-free. Other tags, skipped proofs and axioms still fail.
+- A theorem cited in the ledger must be certified in a book whose entire include
+  tree has no `skip-proofs`, `defaxiom`, trust tags, uncertified books or fast-cert.
+  Books that run ATC are generators: they may use the tags in
+  `scripts/atc-allowed-ttags.txt`, but no claim may rest on them. For generated C,
+  the claim rests on the replay book, and the step from `*program*` to the C file is
+  recorded as trusted. Certify from clean with a single script, which fails if any
+  of this is violated. If something forbidden seems necessary, stop and ask.
+- ACL2 pin: recheck for newer soundness fixes at the start of Milestone 3 and before
+  the verdict. If any exist, tell the owner what they touch before moving the pin.
+- Generated C uses the pointer-free version (three value functions and a hand-written
+  wrapper). Don't change emil's build for speed. Don't describe `adjustPoint` itself
+  as proven: see the ledger wording in `docs/claims.md`.
 - Don't weaken a theorem to get a proof through. If it needs a new hypothesis or
   a narrower claim, tell the owner and explain why.
 - Check for vacuity: show the hypotheses can be satisfied, and seed bugs in the
@@ -56,5 +62,4 @@ The full brief is in `docs/brief.md`. Current state and next step are in
   you go, for `docs/verdict.md`.
 - `docs/verdict.md` must list both ATC findings as evidence of what ATC costs in
   practice: the write-on-every-path requirement and the `:alloc` hypothesis.
-- The owner chooses between the pointer and pointer-free versions before Milestone 1. See the
-  decisions in `docs/claims.md`.
+- `docs/verdict.md` must also log the returned-struct failure as an open question.

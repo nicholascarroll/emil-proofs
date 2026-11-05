@@ -17,7 +17,7 @@ export ACL2="$TOOLS_DIR/acl2/saved_acl2"
 export ACL2_SYSTEM_BOOKS="$TOOLS_DIR/acl2/books"
 CERT="$TOOLS_DIR/acl2/books/build/cert.pl"
 JOBS="${JOBS:-2}"
-STRICT_DIRS=(acl2/trivial)
+STRICT_DIRS=(acl2/trivial acl2/claims)
 ATC_DIRS=(acl2/atc-proto acl2/atc-scalar)
 ALLOWED="$here/scripts/atc-allowed-ttags.txt"
 cd "$here" || exit 1
