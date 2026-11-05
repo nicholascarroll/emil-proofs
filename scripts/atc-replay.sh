@@ -14,7 +14,15 @@ export TOOLS_DIR="${TOOLS_DIR:-$HOME/tools}"
 ACL2="$TOOLS_DIR/acl2/saved_acl2"; export ACL2 ACL2_CUSTOMIZATION=NONE
 src="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; name="$(basename "$1" .lisp)"; fns="$2"
 W="$here/build/replay/$name"; rm -rf "$W"; mkdir -p "$W/dump"
-cp "$src" "$W/dump/$name.lisp"
+# Relative includes must still resolve from the dump directory
+python3 -c "
+import os, re, sys
+src, out = sys.argv[1], sys.argv[2]
+d = os.path.dirname(src)
+t = open(src).read()
+t = re.sub(r'\\(include-book \"(\\.\\./[^\"]+)\"\\)', lambda m: '(include-book \"%s\")' % os.path.normpath(os.path.join(d, m.group(1))), t)
+open(out, 'w').write(t)
+" "$src" "$W/dump/$name.lisp"
 INC="kestrel/c/atc/symbolic-execution-rules/top kestrel/c/atc/shallow-embedding kestrel/c/atc/function-and-loop-generation kestrel/event-macros/proof-preparation kestrel/event-macros/cw-event tools/trivial-ancestors-check std/system/theorem-symbolp misc/install-not-normalized"
 
 ( cd "$W/dump"

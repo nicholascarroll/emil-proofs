@@ -19,6 +19,7 @@
 
 ;; Text order on positions
 (defun pos<= (ax ay bx by)
+  (declare (xargs :guard (and (rationalp ax) (rationalp ay) (rationalp bx) (rationalp by))))
   (or (< ay by) (and (= ay by) (<= ax bx))))
 
 ;; ---- Edits ----
@@ -106,10 +107,14 @@
 
 ;; IMAX stands for INT_MAX, so the claims can be tested at small values. C's int has
 ;; IMAX = 2147483647, and INT_MIN = -IMAX - 1 in ATC's two's complement model.
-(defun in-int-p (v imax) (and (<= (- (- imax) 1) v) (<= v imax)))
+(defun in-int-p (v imax)
+  (declare (xargs :guard (and (rationalp v) (rationalp imax))))
+  (and (<= (- (- imax) 1) v) (<= v imax)))
 
 ;; True exactly when no operation emil's adjustPoint performs on this path overflows.
 (defun adjust-no-overflow-p (x y sx sy ex ey del imax)
+  (declare (xargs :guard (and (integerp x) (integerp y) (integerp sx) (integerp sy)
+                              (integerp ex) (integerp ey) (integerp imax))))
   (let ((d (- ey sy)))
     (and (in-int-p d imax)
          (if del

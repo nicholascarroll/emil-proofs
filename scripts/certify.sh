@@ -17,7 +17,7 @@ export ACL2="$TOOLS_DIR/acl2/saved_acl2"
 export ACL2_SYSTEM_BOOKS="$TOOLS_DIR/acl2/books"
 CERT="$TOOLS_DIR/acl2/books/build/cert.pl"
 JOBS="${JOBS:-2}"
-STRICT_DIRS=(acl2/trivial acl2/claims)
+STRICT_DIRS=(acl2/trivial acl2/claims acl2/c-link)
 ATC_DIRS=(acl2/atc-proto acl2/atc-scalar)
 ALLOWED="$here/scripts/atc-allowed-ttags.txt"
 cd "$here" || exit 1
@@ -64,8 +64,16 @@ done
 # Only these replay books, not the ATC books above, may back a claim.
 while read -r book fns; do
   [ -n "$book" ] || continue
-  scripts/atc-replay.sh "$book" "$fns" || fail=1
+  # The pointer-free version's replay also proves the link from generated C to the spec
+  case "$book" in
+    */three-functions.lisp) link="$here/acl2/c-link/link-events.lsp" ;;
+    *) link="" ;;
+  esac
+  ATC_REPLAY_LINK="$link" scripts/atc-replay.sh "$book" "$fns" || fail=1
 done < scripts/atc-books.txt
+
+# Every approved statement must be proved exactly as approved
+scripts/check-statements.py "$here" || fail=1
 
 [ "$checked" -gt 0 ] || { echo "NO CERTIFICATES CHECKED"; fail=1; }
 [ "$fail" = 0 ] && echo "CERTIFY OK ($checked books)" || { echo "CERTIFY FAILED: rules violated"; exit 1; }
