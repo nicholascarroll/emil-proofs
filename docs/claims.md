@@ -5,7 +5,7 @@ Milestone 1 domain. **Nothing is proved yet.** Full statements are in `docs/m2-c
 
 | Claim | Formal theorem | Evidence | Assumptions | Owner review |
 |---|---|---|---|---|
-| Edit hypothesis at emil's call sites | Not a theorem: `docs/m2-call-sites.md` | Read at all 50 sites, no violation in about 2 million checked calls | Most sites rely on the cursor invariant or undo history | Awaiting |
+| Edit hypothesis at emil's call sites | Not a theorem: `docs/m2-call-sites.md` | Read at all 51 sites, no violation in about 2 million checked calls | Most sites rely on the cursor invariant or undo history | Awaiting |
 | 1. Character preservation | `insert-keeps-character-before`, `insert-keeps-character-after`, `delete-keeps-character-before`, `delete-keeps-character-after` | Tested | Valid text, point and ordered edit. Model differences in `docs/m2-claims.md` | Awaiting |
 | 2. Exact boundaries | `insert-at-point-stays-before`, `delete-at-start-stays`, `delete-inside-clamps`, `delete-at-end-clamps-but-keeps-character`, `delete-return-is-exact`, `empty-insert-changes-nothing`, `empty-delete-changes-nothing` | Tested | As above | Awaiting |
 | 3. Validity | `insert-keeps-point-valid`, `delete-keeps-point-valid` | Tested | As above. False hypothesis for stale window points | Awaiting |

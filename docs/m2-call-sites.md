@@ -1,6 +1,6 @@
 # Milestone 2: does every call site establish "the edit is valid and ordered"?
 
-Subject: emil `ac98ba0b`. I read all 50 places that reach `adjustPoint`, then checked what
+Subject: emil `ac98ba0b`. I read all 51 places that reach `adjustPoint`, then checked what
 actually arrives by running an instrumented scratch copy of emil (`tests/m2/audit_patch.py`).
 
 **Result: no call site was found passing an invalid or unordered edit, but most don't establish
@@ -23,7 +23,7 @@ totals. Violations are logged immediately, so that count is complete. This shows
 insertions after. A multi-row insertion's start and end are checked against the row they end up
 in, which is what the rows can show at that point.
 
-## The 50 sites
+## The 51 sites
 
 | Group | Sites | Establishes order? | Establishes range? | Depends on |
 |---|---|---|---|---|

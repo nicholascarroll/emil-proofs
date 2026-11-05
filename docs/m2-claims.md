@@ -367,7 +367,7 @@ Traced by reading emil `ac98ba0b`. **Partly: yes for the row limits, no for poin
 |---|---|
 | Row size | At most `INT_MAX - 1`, enforced by `abort()` on the paths above. Not 10^9 |
 | Row count | At most `INT_MAX`, enforced by `abort()`. A file load refuses more than `INT_MAX / 2` |
-| Edit start and end | No invalid or unordered edit found at any of the 50 sites, by reading and in about 2 million checked calls. **Most sites rely on an invariant, not a local check.** See `docs/m2-call-sites.md` |
+| Edit start and end | No invalid or unordered edit found at any of the 51 sites, by reading and in about 2 million checked calls. **Most sites rely on an invariant, not a local check.** See `docs/m2-call-sites.md` |
 | `is_delete` | Any `int` is fine. Callers pass 0, 1 or a record's flag |
 | Mark and mark ring | Checked to be non-negative before the call. The sentinel is -1 |
 | **Other windows' cursor** | **No validity check, and no upper limit.** Stale in practice: see below |
@@ -409,7 +409,7 @@ them, and this is logged as defect D2, not fixed.
 |---|---|---|
 | Text is a non-empty list of lines | All | Model. See the differences below |
 | The point is valid in the text before the edit | 1, 2 (where it takes a point), 3, 4b | **False for stale window points** |
-| The edit is valid and ordered | All | No violation found at any of the 50 sites, but most rely on the cursor invariant or undo history: see `docs/m2-call-sites.md` |
+| The edit is valid and ordered | All | No violation found at any of the 51 sites, but most rely on the cursor invariant or undo history: see `docs/m2-call-sites.md` |
 | Inserted text's end is `computeInsertEnd`'s answer | Insert claims | Model definition, matching `undo.c` by reading |
 | Row limits, before and after the edit | 4b | Enforced by `abort()` in emil |
 | `int` is 32-bit two's complement | 4a | ATC's C model |
