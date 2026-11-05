@@ -56,7 +56,27 @@ Delete counts include the re-runs with the other `is_delete` values.
 18 changes to a copy of the function. 15 are real bugs at this scale, and the harness
 caught all 15. Emil's `tests/test_adjust.c` caught 13 of them.
 
-SEEDED_TABLE
+| ID | Seeded bug | Exhaustive harness (failing checks) | Emil's test_adjust |
+|---|---|---|---|
+| M01 | Point at deletion start treated as inside | caught (231,440) | caught (1 of 30 tests) |
+| M02 | Point at deletion end not treated as inside | caught (196,280) | caught (1 of 30 tests) |
+| M03 | Point at insertion moves with the text (emil's old Spec 05 P2 bug) | caught (6,847,410) | caught (4 of 30 tests) |
+| M04 | End-line column forgets the start column | caught (167,960) | caught (2 of 30 tests) |
+| M05 | End-line point keeps its old line | caught (371,868) | caught (1 of 30 tests) |
+| M06 | Later lines don't shift up | caught (517,500) | caught (4 of 30 tests) |
+| M07 | Later lines shift by one too many | caught (783,660) | caught (4 of 30 tests) |
+| M08 | Multi-line insert uses the single-line column formula (not a bug: same arithmetic) | **missed** | **missed** |
+| M09 | Multi-line insert forgets the line on the insertion line | caught (14,332,974) | caught (1 of 30 tests) |
+| M10 | Later lines don't shift down | caught (35,945,470) | caught (2 of 30 tests) |
+| M11 | Clamp swaps x and y | caught (1,005,380) | caught (3 of 30 tests) |
+| M12 | Any point on the end line treated as inside | caught (281,240) | caught (4 of 30 tests) |
+| M13 | Same-line insert adds the end column, not the length | caught (49,810) | caught (1 of 30 tests) |
+| M14 | Clamped point returns 0 | caught (913,340) | caught (3 of 30 tests) |
+| M15 | Line delta truncated to 8 bits (wrong only for 128+ lines) | **missed** | **missed** |
+| M16 | End-line column truncated to 16 bits (wrong only past 32767) | **missed** | **missed** |
+| M17 | Multi-line insert forgets the end column | caught (7,266,400) | caught (1 of 30 tests) |
+| M18 | Multi-line deletion misses points on its start line | caught (365,400) | **missed** |
+| M19 | End-line point after deletion clamped when on the end column plus one | caught (146,480) | **missed** |
 
 - **M08 isn't a bug. It was my mistake.** `endx + (*px - startx)` and `*px + (endx - startx)`
   are the same arithmetic, so nothing can catch it. See "Unexpected" below.

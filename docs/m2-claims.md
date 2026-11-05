@@ -8,7 +8,7 @@ definitions.
 Each statement has been run on every case of a small domain (up to 3 lines of 2 characters,
 inserted text of up to 2 lines of 2 characters, at `INT_MAX` and at a tight `IMAX` of 4).
 None failed, and every hypothesis was satisfied somewhere. Deliberately breaking the spec
-made the check fail in 4 of 5 controls. The fifth, weakening the overflow predicate, can't be
+made the check fail in 4 of 5 controls, and a sixth control confirmed `delete-return-is-exact` notices a wrong return value. The fifth, weakening the overflow predicate, can't be
 seen there. Guard verification and `tests/m2/overflow_exact.c` cover that. This is testing of
 the statements, not evidence that they're proved.
 
@@ -31,10 +31,53 @@ the statements, not evidence that they're proved.
 
 A point outside the edit still refers to the same character.
 
-CLAIM(insert-keeps-character-before)
-CLAIM(insert-keeps-character-after)
-CLAIM(delete-keeps-character-before)
-CLAIM(delete-keeps-character-after)
+```lisp
+(defclaim insert-keeps-character-before (tx sx sy ins x y)
+  (and (valid-insert-p tx sx sy ins)
+       (valid-pos-p x y tx)
+       (not (pos<= sx sy x y)))              ; point strictly before the insertion
+  (let* ((r (adjust-spec x y sx sy (insert-end-x sx ins) (insert-end-y sy ins) nil))
+         (new (insert-text tx sx sy ins)))
+    (and (equal (adj-x r) x)
+         (equal (adj-y r) y)
+         (equal (adj-ret r) 0)
+         (equal (char-at x y new) (char-at x y tx))
+         (equal (text-through x y new) (text-through x y tx)))))
+```
+```lisp
+(defclaim insert-keeps-character-after (tx sx sy ins x y)
+  (and (valid-insert-p tx sx sy ins)
+       (valid-pos-p x y tx)
+       (not (pos<= x y sx sy)))              ; point strictly after the insertion
+  (let* ((r (adjust-spec x y sx sy (insert-end-x sx ins) (insert-end-y sy ins) nil))
+         (new (insert-text tx sx sy ins)))
+    (and (equal (adj-ret r) 0)
+         (equal (char-at (adj-x r) (adj-y r) new) (char-at x y tx))
+         (equal (text-from (adj-x r) (adj-y r) new) (text-from x y tx)))))
+```
+```lisp
+(defclaim delete-keeps-character-before (tx sx sy ex ey x y)
+  (and (valid-delete-p tx sx sy ex ey)
+       (valid-pos-p x y tx)
+       (not (pos<= sx sy x y)))              ; point strictly before the deletion
+  (let* ((r (adjust-spec x y sx sy ex ey t))
+         (new (delete-text tx sx sy ex ey)))
+    (and (equal (adj-x r) x)
+         (equal (adj-y r) y)
+         (equal (adj-ret r) 0)
+         (equal (char-at x y new) (char-at x y tx))
+         (equal (text-through x y new) (text-through x y tx)))))
+```
+```lisp
+(defclaim delete-keeps-character-after (tx sx sy ex ey x y)
+  (and (valid-delete-p tx sx sy ex ey)
+       (valid-pos-p x y tx)
+       (pos<= ex ey x y))                    ; point at or after the deletion's end
+  (let* ((r (adjust-spec x y sx sy ex ey t))
+         (new (delete-text tx sx sy ex ey)))
+    (and (equal (char-at (adj-x r) (adj-y r) new) (char-at x y tx))
+         (equal (text-from (adj-x r) (adj-y r) new) (text-from x y tx)))))
+```
 
 **In plain English:**
 - A point before an insertion or deletion doesn't move. It names the same character, and
@@ -56,13 +99,83 @@ columns are bytes, so here "character" means one element of the line, which is a
 | At a deletion's end | Deletion start | 1 | **Yes.** Its character survives and has moved to the start |
 | Any point, empty edit | Stays | 0 | Yes, and the text is unchanged |
 
-CLAIM(insert-at-point-stays-before)
-CLAIM(delete-at-start-stays)
-CLAIM(delete-inside-clamps)
-CLAIM(delete-at-end-clamps-but-keeps-character)
-CLAIM(delete-return-is-exact)
-CLAIM(empty-insert-changes-nothing)
-CLAIM(empty-delete-changes-nothing)
+```lisp
+(defclaim insert-at-point-stays-before (tx sx sy ins)
+  (and (valid-insert-p tx sx sy ins)
+       (not (equal ins '(nil))))             ; a real insertion, point exactly at it
+  (let* ((ex (insert-end-x sx ins))
+         (ey (insert-end-y sy ins))
+         (r (adjust-spec sx sy sx sy ex ey nil))
+         (new (insert-text tx sx sy ins)))
+    (and (equal (adj-x r) sx)
+         (equal (adj-y r) sy)
+         (equal (adj-ret r) 0)
+         ;; "same character" stops here: the point now names the first inserted
+         ;; character, and the old character is at the end of the insertion
+         (equal (char-at sx sy new) (char-at 0 0 ins))
+         (equal (char-at ex ey new) (char-at sx sy tx)))))
+```
+```lisp
+(defclaim delete-at-start-stays (tx sx sy ex ey)
+  (and (valid-delete-p tx sx sy ex ey)
+       (not (and (equal sx ex) (equal sy ey))))  ; a real deletion, point at its start
+  (let* ((r (adjust-spec sx sy sx sy ex ey t))
+         (new (delete-text tx sx sy ex ey)))
+    (and (equal (adj-x r) sx)
+         (equal (adj-y r) sy)
+         (equal (adj-ret r) 0)                   ; returns 0 though its character went
+         (equal (char-at sx sy new) (char-at ex ey tx)))))
+```
+```lisp
+(defclaim delete-inside-clamps (tx sx sy ex ey x y)
+  (and (valid-delete-p tx sx sy ex ey)
+       (valid-pos-p x y tx)
+       (not (pos<= x y sx sy))               ; strictly after the start
+       (not (pos<= ex ey x y)))              ; strictly before the end
+  (let* ((r (adjust-spec x y sx sy ex ey t))
+         (new (delete-text tx sx sy ex ey)))
+    (and (equal (adj-x r) sx)
+         (equal (adj-y r) sy)
+         (equal (adj-ret r) 1)
+         (equal (char-at sx sy new) (char-at ex ey tx)))))
+```
+```lisp
+(defclaim delete-at-end-clamps-but-keeps-character (tx sx sy ex ey)
+  (and (valid-delete-p tx sx sy ex ey)
+       (not (and (equal sx ex) (equal sy ey))))  ; a real deletion, point at its end
+  (let* ((r (adjust-spec ex ey sx sy ex ey t))
+         (new (delete-text tx sx sy ex ey)))
+    (and (equal (adj-x r) sx)
+         (equal (adj-y r) sy)
+         (equal (adj-ret r) 1)                   ; returns 1 though its character survives
+         (equal (char-at sx sy new) (char-at ex ey tx)))))
+```
+```lisp
+(defclaim delete-return-is-exact (tx sx sy ex ey x y)
+  (and (valid-delete-p tx sx sy ex ey)
+       (valid-pos-p x y tx))
+  (equal (adj-ret (adjust-spec x y sx sy ex ey t))
+         (if (and (not (pos<= x y sx sy))    ; after the start
+                  (pos<= x y ex ey))         ; at or before the end
+             1
+           0)))
+```
+```lisp
+(defclaim empty-insert-changes-nothing (tx sx sy x y)
+  (and (valid-insert-p tx sx sy '(nil))
+       (valid-pos-p x y tx))
+  (let ((r (adjust-spec x y sx sy sx sy nil)))
+    (and (equal (insert-text tx sx sy '(nil)) tx)
+         (equal (adj-x r) x) (equal (adj-y r) y) (equal (adj-ret r) 0))))
+```
+```lisp
+(defclaim empty-delete-changes-nothing (tx sx sy x y)
+  (and (valid-delete-p tx sx sy sx sy)
+       (valid-pos-p x y tx))
+  (let ((r (adjust-spec x y sx sy sx sy t)))
+    (and (equal (delete-text tx sx sy sx sy) tx)
+         (equal (adj-x r) x) (equal (adj-y r) y) (equal (adj-ret r) 0))))
+```
 
 **What this doesn't cover:** whether staying put is the right behaviour for the editor.
 `adjust.h` and `test_adjust.c` chose it, and these statements only pin it down. "The character
@@ -76,8 +189,22 @@ inside, the end is. That's in the ledger as a new decision.
 
 A valid point stays valid in the edited text.
 
-CLAIM(insert-keeps-point-valid)
-CLAIM(delete-keeps-point-valid)
+```lisp
+(defclaim insert-keeps-point-valid (tx sx sy ins x y)
+  (and (valid-insert-p tx sx sy ins)
+       (valid-pos-p x y tx))
+  (let ((r (adjust-spec x y sx sy (insert-end-x sx ins) (insert-end-y sy ins) nil)))
+    (and (text-p (insert-text tx sx sy ins))
+         (valid-pos-p (adj-x r) (adj-y r) (insert-text tx sx sy ins)))))
+```
+```lisp
+(defclaim delete-keeps-point-valid (tx sx sy ex ey x y)
+  (and (valid-delete-p tx sx sy ex ey)
+       (valid-pos-p x y tx))
+  (let ((r (adjust-spec x y sx sy ex ey t)))
+    (and (text-p (delete-text tx sx sy ex ey))
+         (valid-pos-p (adj-x r) (adj-y r) (delete-text tx sx sy ex ey)))))
+```
 
 **What this doesn't cover:** a point that was already invalid. Those do occur in emil. See
 "Does emil guarantee the hypotheses?" below.
@@ -98,7 +225,24 @@ the point takes. The exact condition is `adjust-no-overflow-p`, which checks eve
 on the path taken:
 
 ```lisp
-PREDICATE
+(defun adjust-no-overflow-p (x y sx sy ex ey del imax)
+  (let ((d (- ey sy)))
+    (and (in-int-p d imax)
+         (if del
+             (cond ((pos<= x y sx sy) t)
+                   ((pos<= x y ex ey) t)
+                   ((= y ey) (and (in-int-p (- x ex) imax)
+                                  (in-int-p (+ sx (- x ex)) imax)))
+                   (t (in-int-p (- y d) imax)))
+           (cond ((pos<= x y sx sy) t)
+                 ((= y sy)
+                  (if (= d 0)
+                      (and (in-int-p (- ex sx) imax)
+                           (in-int-p (+ x (- ex sx)) imax))
+                    (and (in-int-p (- x sx) imax)
+                         (in-int-p (+ ex (- x sx)) imax)
+                         (in-int-p (+ y d) imax))))
+                 (t (in-int-p (+ y d) imax)))))))
 ```
 
 Evidence that it's exact: `tests/m2/overflow_exact.c` ran every combination of 9 corner values
@@ -117,8 +261,22 @@ alone it's stricter than needed, because it includes checks for `adjust_new_y`.
 **4b. Connection to the text model.** Within emil's row limits, a valid point and edit can't
 overflow:
 
-CLAIM(insert-within-limits-cannot-overflow)
-CLAIM(delete-within-limits-cannot-overflow)
+```lisp
+(defclaim insert-within-limits-cannot-overflow (tx sx sy ins x y imax)
+  (and (valid-insert-p tx sx sy ins)
+       (valid-pos-p x y tx)
+       (emil-limits-p tx imax)
+       (emil-limits-p (insert-text tx sx sy ins) imax))
+  (adjust-no-overflow-p x y sx sy (insert-end-x sx ins) (insert-end-y sy ins) nil imax))
+```
+```lisp
+(defclaim delete-within-limits-cannot-overflow (tx sx sy ex ey x y imax)
+  (and (valid-delete-p tx sx sy ex ey)
+       (valid-pos-p x y tx)
+       (emil-limits-p tx imax)
+       (emil-limits-p (delete-text tx sx sy ex ey) imax))
+  (adjust-no-overflow-p x y sx sy ex ey t imax))
+```
 
 Here, `emil-limits-p` is "every row has at most `IMAX - 1` characters and there are at most
 `IMAX` rows", which is what `undo.c` states as its limits. The hypotheses apply to the text

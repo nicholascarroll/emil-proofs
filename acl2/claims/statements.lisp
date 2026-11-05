@@ -122,6 +122,17 @@
     (and (equal (delete-text tx sx sy sx sy) tx)
          (equal (adj-x r) x) (equal (adj-y r) y) (equal (adj-ret r) 0))))
 
+;; Every other deletion statement fixes the return value for its own case. This one
+;; states the whole rule, including points after the deletion.
+(defclaim delete-return-is-exact (tx sx sy ex ey x y)
+  (and (valid-delete-p tx sx sy ex ey)
+       (valid-pos-p x y tx))
+  (equal (adj-ret (adjust-spec x y sx sy ex ey t))
+         (if (and (not (pos<= x y sx sy))    ; after the start
+                  (pos<= x y ex ey))         ; at or before the end
+             1
+           0)))
+
 ;; ------------------ Claim 3: validity ------------------
 
 (defclaim insert-keeps-point-valid (tx sx sy ins x y)
@@ -210,6 +221,7 @@
            (tally (note 'delete-keeps-character-before (delete-keeps-character-before tx sx sy ex ey x y) tally))
            (tally (note 'delete-keeps-character-after (delete-keeps-character-after tx sx sy ex ey x y) tally))
            (tally (note 'delete-inside-clamps (delete-inside-clamps tx sx sy ex ey x y) tally))
+           (tally (note 'delete-return-is-exact (delete-return-is-exact tx sx sy ex ey x y) tally))
            (tally (note 'delete-keeps-point-valid (delete-keeps-point-valid tx sx sy ex ey x y) tally))
            (tally (note 'delete-within-limits-cannot-overflow (delete-within-limits-cannot-overflow tx sx sy ex ey x y imax) tally))
            (tally (note 'empty-delete-changes-nothing (empty-delete-changes-nothing tx sx sy x y) tally)))
@@ -257,7 +269,7 @@
 (make-event
  (let ((tally (check-all)))
    (prog2$ (cw "~%STATEMENT-CHECK ~x0~%" tally)
-           (if (and (equal (len tally) 14)
+           (if (and (equal (len tally) 15)
                     (not (member-equal 0 (strip-cars (strip-cdrs tally)))))
                '(value-triple :statements-checked)
              (er hard? 'statements "A claim's hypotheses were never satisfied: ~x0" tally)))))
