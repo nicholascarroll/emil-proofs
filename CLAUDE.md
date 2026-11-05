@@ -31,6 +31,9 @@ The full brief is in `docs/brief.md`. Current state and next step are in
 - A theorem may not rely on `skip-proofs`, `defaxiom`, trust tags, uncertified
   books or fast-cert. Certify from clean with a single script, which fails if
   any appear. If one seems necessary, stop and ask.
+- Owner-approved exception (2026-11-06): books that run ATC may use exactly the
+  trust tags in `scripts/atc-allowed-ttags.txt`, because ATC requires them. Spec
+  and claim books stay tag-free. Other tags, skipped proofs and axioms still fail.
 - Don't weaken a theorem to get a proof through. If it needs a new hypothesis or
   a narrower claim, tell the owner and explain why.
 - Check for vacuity: show the hypotheses can be satisfied, and seed bugs in the

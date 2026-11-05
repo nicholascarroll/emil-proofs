@@ -15,8 +15,7 @@
 
 ## Open questions for the owner
 
-1. ATC itself requires trust tags, which collides with the no-trust-tags rule.
-   See `docs/atc-reality-check.md` once written.
+None yet. Decision made: see the ATC trust tags entry in `docs/claims.md`.
 
 ## Effort log (for docs/verdict.md)
 
