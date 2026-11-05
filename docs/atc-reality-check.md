@@ -170,8 +170,8 @@ The causes of the two struct failures weren't investigated. Reproductions are in
 
 ### Does the generated theorem have `:alloc` or pointer hypotheses?
 
-**No.** The three `-CORRECT` theorems were checked by searching the printed
-`adjust_new_x` theorem for `alloc`, `pointer`, `objdes` and `disjoint`: 0 matches. The
+**No.** Searching the three printed `-CORRECT` theorems for `alloc`, `pointer`,
+`objdes` and `disjoint` gives 0 matches. The
 hypotheses are that the state is a computation state, the function environment is this
 program's, all seven inputs are `int` values within the guard's bounds, and the
 execution limit is high enough. The conclusion also says the state is left unchanged:
@@ -196,7 +196,7 @@ the values real callers pass, whichever storage they came from.
 | | Emil | Pointer version (A) | Pointer-free (F) |
 |---|---|---|---|
 | Generated C | n/a | 1 function, 7 extra writes | 3 functions, 0 pointers, no write-backs |
-| Hand-written C | 54 lines | None | 7-line wrapper body |
+| Hand-written C | 54 lines | None | Wrapper with 5 statements |
 | `-Wparentheses` warnings | 0 | 3 | 8 |
 | `.text` at `-O2` (gcc, bytes) | 236 | 235 | 657 (376 + 281) |
 | Time per call, separate files | 6.3 to 6.7 ns | 6.3 to 6.5 ns | 10.9 to 11.4 ns |
