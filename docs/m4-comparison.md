@@ -38,16 +38,16 @@ Emil's `DEFAULT_CFLAGS` include `-Wall` but not `-Werror`, so its build still wo
 ## Size and speed at `-O2`
 
 Separate object files, as emil builds them. Five runs each on an idle machine, 200 million calls per run.
-Timings vary by about 10%.
+Figures are from the final run. An earlier run was up to about 15% slower, with similar ratios.
 
 | | Emil | Generated + wrapper | Ratio |
 |---|---|---|---|
 | gcc `.text` bytes | 236 | 657 (376 + 281) | 2.8x |
 | clang `.text` bytes | 168 | 561 (327 + 234) | 3.3x |
-| gcc ns per call | 6.5 to 7.6 | 11.2 to 12.4 | About 1.7x |
-| clang ns per call | 7.1 to 7.6 | 16.9 to 19.3 | About 2.4x |
-| gcc with `-flto`, for reference | | 5.7 to 6.6 | About 0.9x |
-| clang with `-flto`, for reference | | 7.9 to 8.6 | About 1.1x |
+| gcc ns per call | 6.2 to 6.7 | 10.5 to 11.3 | About 1.7x |
+| clang ns per call | 6.4 to 6.6 | 16.1 to 16.5 | About 2.5x |
+| gcc with `-flto`, for reference | | 5.2 to 5.5 | About 0.8x |
+| clang with `-flto`, for reference | | 7.8 to 8.1 | About 1.2x |
 
 The cost is from three calls that each repeat the branch tests. `-flto` removes it, but you've ruled out changing
 emil's build for speed. In absolute terms it's 5 to 10 ns per point. One edit adjusts a handful of points, so I
