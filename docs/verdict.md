@@ -12,6 +12,19 @@ Evidence collected so far, for the final write-up.
    literally cover any real call. Avoiding it needs a pointer-free design and a
    hand-written wrapper, with an unproven wrapper and a measured speed cost without LTO.
 
+## What testing and spec work found so far
+
+To be weighed against proof at Milestone 5.
+
+- Exhaustive testing passed: 86.4 million checks in under 2 seconds. It caught all 15 real
+  small-scale seeded bugs. Emil's own tests caught 13. It can't see M15 and M16, which need
+  large values.
+- **Found by tracing callers for claim 4, not by testing or proof:** the 10^9 bound was wrong, and
+  stale window points can reach `adjustPoint`. Writing the hypotheses is what prompted the trace.
+- **Found by writing the boundary table:** `adjust.h`'s return value doesn't mean "character lost",
+  and no caller uses it.
+- Found by my own seeding mistake: the `lines_delta == 0` branch for insertions is redundant in value.
+
 ## Open questions
 
 - **Returned struct.** ATC's types allow a struct passed and returned by value, but its

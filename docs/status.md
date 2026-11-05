@@ -2,21 +2,18 @@
 
 ## Current state
 
-- Milestone: 0 (toolchain and ATC reality check), in progress.
-- Remote: `nicholascarroll/emil-proofs`, working branch `milestone-0`.
-- Pins: see `scripts/versions.env`.
+- Milestone 2: statements proposed. **Stopped for owner review. Nothing is proved.**
+- Remote: `nicholascarroll/emil-proofs`, working branch `milestone-2`.
+- Pins: see `scripts/versions.env`. Generated C uses the pointer-free version.
 
 ## Next step
 
-Waiting for owner review. Don't start Milestone 1 until these are answered.
+Wait for the owner's answers to the questions at the end of `docs/m2-claims.md`. Then start
+Milestone 3, beginning with the ACL2 pin recheck required by `CLAUDE.md`.
 
-## Open questions for the owner
+## Reports
 
-1. Pointer-free version F, or the pointer version with the fallback wording?
-2. Adopt the rule wording in `docs/trust-and-pin.md`?
-3. Keep the ACL2 pin, rechecking at Milestone 3 and before the verdict?
-
-Reports: `docs/atc-reality-check.md`, `docs/trust-and-pin.md`.
+`docs/m1-testing.md`, `docs/m2-claims.md`, `docs/atc-reality-check.md`, `docs/trust-and-pin.md`.
 
 ## Effort log (for docs/verdict.md)
 
@@ -28,3 +25,8 @@ Reports: `docs/atc-reality-check.md`, `docs/trust-and-pin.md`.
 | M0 | Clean rebuild: setup, then certify with community books (2 cores) | 129s + 29m11s |
 | M0 | Certify and replay all repo books, community books already built | 11m03s |
 | M0 | One replay certification | 24 to 31s |
+| M0 | C$ round trip, including 219 more community books | About 29m certification, 3 runs |
+| M1 | Exhaustive harness, 4x4 | 1.9s per run |
+| M1 | Exhaustive harness, 5x5 | 7m31s |
+| M2 | Corner-case overflow check, per function | About 3m25s |
+| M2 | Statement check on the small domain | Under 1s |

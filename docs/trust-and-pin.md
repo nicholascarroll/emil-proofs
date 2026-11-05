@@ -127,3 +127,25 @@ one in use.
 calls. It is a separate issue from either ATC failure in
 `docs/atc-reality-check.md`: those fail in different generated theorems, and they
 still fail with this fix in place.
+
+## 4. Parsing the generated C back (timeboxed check)
+
+**Evidence about this one output (`adjust_scalar.c` and `.h`), not proof of the printer.**
+`scripts/roundtrip.sh` parses the generated files with C$, maps the result to ATC's syntax,
+and compares it with `*program*`.
+
+| Check | Result |
+|---|---|
+| `adjust_scalar.h` | Identical |
+| `adjust_scalar.c` | Identical except that each of the 3 literal `0`s comes back tagged octal, not decimal |
+| Control: `.c` edited from `x <= startx` to `x < startx` | Comparison detects it |
+
+The difference isn't a defect in the output: C's grammar makes `0` an octal constant, while ATC's
+tree calls it decimal, and the value and type are the same. The comparison normalises only that tag.
+
+**Limits:**
+- C$ also printed the file, so a misreading shared by its printer and parser wouldn't show.
+- It compares syntax. It says nothing about what a compiler does with the text.
+- It needs `kestrel/c/syntax/input-files`, which is tag-using, so it can't support a claim under the
+  ledger rule. It's supporting evidence only.
+- It needs 219 more community books certified, which took about 29 minutes here.
