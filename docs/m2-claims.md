@@ -8,7 +8,7 @@ definitions.
 Each statement has been run on every case of a small domain (up to 3 lines of 2 characters,
 inserted text of up to 2 lines of 2 characters, at `INT_MAX` and at a tight `IMAX` of 4).
 None failed, and every hypothesis was satisfied somewhere. Deliberately breaking the spec
-made the check fail in 4 of 5 controls, and a sixth, returning 1 for a point past the deletion, tripped only `delete-return-is-exact`. The fifth, weakening the overflow predicate, can't be
+made the check fail in 4 of 5 controls, and a sixth, returning 1 for a point past the deletion, was caught by `delete-return-is-exact`. The fifth, weakening the overflow predicate, can't be
 seen there. Guard verification and `tests/m2/overflow_exact.c` cover that. This is testing of
 the statements, not evidence that they're proved.
 
