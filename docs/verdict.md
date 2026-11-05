@@ -32,7 +32,7 @@ clamped, no effect found), and R1 (`adjustPoint`'s return value is unused).
 went through and found nothing wrong with `adjustPoint`. What found problems was writing the claims down precisely, tracing whether their
 hypotheses hold, and running emil's fuzzer.
 
-ATC's generated C matches the spec in its model, but I wouldn't swap it in: it's about 1.7 to 2.4 times slower per call without `-flto`, about
+ATC's generated C matches the spec in its model, but I wouldn't swap it in: it's about 1.7 to 2.5 times slower per call without `-flto`, about
 3 times larger, and adds 8 warnings. And `adjustPoint` itself still wouldn't be proven.
 
 This is one small, pure function of integer arithmetic, already well tested. It says little about harder code.
