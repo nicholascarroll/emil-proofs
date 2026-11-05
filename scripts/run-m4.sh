@@ -33,3 +33,17 @@ for m in M15 M16; do
   gcc -std=c99 -O1 -w -I"$P" "$T/m4/diff_large.c" ctrl.c "$P/adjust_scalar.c" -DadjustPoint=gen_adjustPoint "$P/adjust_wrapper.c" -o ctrl
   if ./ctrl 2000000 > ctrl.out; then echo "$m: NOT caught"; else echo "$m: caught ($(grep 'total differences' ctrl.out))"; fi
 done
+echo "== size and speed at -O2, five runs each, idle machine assumed"
+O="-std=c99 -O2 -w"; BN="$T/m0/bench.c"
+sed 's/emil_adjustPoint/adjustPoint/' emil_renamed.c > e.c
+for cc in gcc clang; do
+  $cc $O -c e.c -o e-$cc.o; $cc $O -I"$P" -c "$P/adjust_scalar.c" -o s-$cc.o; $cc $O -I"$P" -c "$P/adjust_wrapper.c" -o w-$cc.o
+  echo "-- $cc .text bytes: emil=$(size e-$cc.o | awk 'NR==2{print $1}') generated=$(size s-$cc.o | awk 'NR==2{print $1}') wrapper=$(size w-$cc.o | awk 'NR==2{print $1}')"
+  $cc $O e.c "$BN" -o b-e-$cc
+  $cc $O -I"$P" "$P/adjust_scalar.c" "$P/adjust_wrapper.c" "$BN" -o b-g-$cc
+  $cc $O -flto -I"$P" "$P/adjust_scalar.c" "$P/adjust_wrapper.c" "$BN" -o b-l-$cc 2>/dev/null || true
+  for b in e g l; do
+    [ -x b-$b-$cc ] || continue
+    printf "%s %s:" $cc $b; for i in 1 2 3 4 5; do ./b-$b-$cc | awk '{printf " %s", $1}'; done; echo
+  done
+done

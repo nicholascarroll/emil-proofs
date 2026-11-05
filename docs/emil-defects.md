@@ -1,6 +1,6 @@
 # Emil: defects and refactor candidates found by this pilot
 
-Logged only. Nothing here has been changed in emil, and none of these is scheduled.
+Logged only. Nothing here has been changed in emil. D2 and D4 are for the owner to act on, and this pilot didn't investigate them further.
 Subject: emil `ac98ba0b`.
 
 | ID | Kind | Summary | Evidence | Status |
