@@ -99,7 +99,7 @@ About 45 certification runs for M3. The proofs took 136 theorems and 1,049 lines
 
 ## How readable and usable is the generated C?
 
-**Usable, but not code I'd want a person to maintain.** It's correct C99 that compiles cleanly except for 8 parenthesis warnings. Its `else` nesting is deeper than emil's, it has no comments (ATC can't emit them), and the pointer-free form repeats the same branch tests in three functions: 76 generated lines plus a wrapper, against 54 in emil. It's best treated as build output, which then needs ACL2 in the workflow or generated files checked in.
+**Usable, but not code I'd want a person to maintain.** It's standard C99 that compiles with only 8 parenthesis warnings. Its `else` nesting is deeper than emil's, it has no comments (ATC can't emit them), and the pointer-free form repeats the same branch tests in three functions: 76 generated lines plus a wrapper, against 54 in emil. It's best treated as build output, which then needs ACL2 in the workflow or generated files checked in.
 
 ## What ATC costs in practice
 
