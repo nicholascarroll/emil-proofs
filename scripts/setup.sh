@@ -16,6 +16,9 @@ if [ "$have" != "$SBCL_APT_VERSION" ]; then
 fi
 sbcl --version
 
+# clang's sanitizer runtime, needed by the C smoke test and later milestones
+dpkg-query -W libclang-rt-18-dev >/dev/null 2>&1 || apt-get install -y -qq "libclang-rt-18-dev=$CLANG_RT_APT_VERSION"
+
 # 2. Fetch one exact commit at depth 1; refuse anything else
 fetch_pinned() { # repo commit dir
   local repo="$1" commit="$2" dir="$3"

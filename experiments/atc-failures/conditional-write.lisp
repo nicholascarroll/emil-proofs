@@ -1,0 +1,10 @@
+; Expected at ACL2 7ac80c83: ATC fails at v1-POP-FRAME, and no C file is written.
+(in-package "ACL2")
+(include-book "kestrel/c/atc/atc" :dir :system :ttags :all)
+(defun |v1| (|x|)
+  (declare (xargs :guard (c::star (c::sintp |x|))))
+  (if (c::boolean-from-sint (c::lt-sint-sint (c::sint-read |x|) (c::sint-dec-const 0)))
+      (mv (c::sint-dec-const 0) |x|)
+    (let ((|x| (c::sint-write (c::sint-dec-const 7))))
+      (mv (c::sint-dec-const 1) |x|))))
+(c::atc |v1| :file-name "v1" :header t)

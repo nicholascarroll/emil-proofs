@@ -1,5 +1,4 @@
 :quicklisp
 :quicklisp.osicat
 :oslib
-:open-output-channel!
 :file-io!

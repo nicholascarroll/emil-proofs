@@ -8,17 +8,18 @@
 
 ## Next step
 
-1. Finish certifying `acl2/trivial` and `acl2/atc-proto` with `scripts/certify.sh`.
-2. Compile and smoke-test the generated C.
-3. Write `docs/atc-reality-check.md`, run setup from clean, report, and stop for
-   owner review.
+Waiting for owner review of Milestone 0 (`docs/atc-reality-check.md`). Don't start
+Milestone 1 until that review is done.
 
 ## Open questions for the owner
 
-None yet. Decision made: see the ATC trust tags entry in `docs/claims.md`.
+1. Accept shape A, with write-backs on unchanged paths?
+2. Accept the `:alloc` gap as a recorded assumption, tested at Milestone 4?
 
 ## Effort log (for docs/verdict.md)
 
 | Stage | Item | Time |
 |---|---|---|
 | M0 | `scripts/setup.sh` (fetch ACL2, build on SBCL) | 2m29s |
+| M0 | First certification incl. community books (2 cores) | 25m22s |
+| M0 | One ATC book after that | ~40s |

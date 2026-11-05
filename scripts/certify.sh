@@ -10,6 +10,7 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 TOOLS_DIR="${1:-${TOOLS_DIR:-$HOME/tools}}"
+export TOOLS_DIR
 export ACL2="$TOOLS_DIR/acl2/saved_acl2"
 export ACL2_SYSTEM_BOOKS="$TOOLS_DIR/acl2/books"
 CERT="$TOOLS_DIR/acl2/books/build/cert.pl"
@@ -43,17 +44,17 @@ for d in "${ATC_DIRS[@]}"; do
   fi
 done
 
-# Certificate-level checks: annotations cover included books too
+# Certificate-level checks: ACL2 loads each book and reports its whole include tree
 checked=0
 for d in "${STRICT_DIRS[@]}"; do
-  for c in $(find "$d" -name '*.cert'); do
-    scripts/cert-annotations.py "$c" --strict || fail=1
+  for f in $(find "$d" -name '*.lisp'); do
+    scripts/cert-audit.py "$f" --strict || fail=1
     checked=$((checked+1))
   done
 done
 for d in "${ATC_DIRS[@]}"; do
-  for c in $(find "$d" -name '*.cert'); do
-    scripts/cert-annotations.py "$c" --allow "$ALLOWED" || fail=1
+  for f in $(find "$d" -name '*.lisp'); do
+    scripts/cert-audit.py "$f" --allow "$ALLOWED" || fail=1
     checked=$((checked+1))
   done
 done
