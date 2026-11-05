@@ -8,13 +8,13 @@
 
 ## Next step
 
-Waiting for owner review of Milestone 0 (`docs/atc-reality-check.md`). Don't start
-Milestone 1 until that review is done.
-
-## Open questions for the owner
-
-1. Accept shape A, with write-backs on unchanged paths?
-2. Accept the `:alloc` gap as a recorded assumption, tested at Milestone 4?
+1. Finish the clean rebuild and report it.
+2. Build the pointer-free prototype and report on it (owner's three questions are in
+   `docs/claims.md` decisions and the task description below).
+   - Does the generated theorem have any `:alloc` or pointer hypotheses?
+   - What exactly remains unproven, including the wrapper?
+   - What is the effect on code shape and proof effort?
+3. Milestone 1 starts only after that.
 
 ## Effort log (for docs/verdict.md)
 

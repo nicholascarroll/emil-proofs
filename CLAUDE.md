@@ -54,3 +54,7 @@ The full brief is in `docs/brief.md`. Current state and next step are in
 - Don't go beyond Milestone 5. Don't swap anything into emil.
 - Record effort per stage, proof iterations, stalls and certification times as
   you go, for `docs/verdict.md`.
+- `docs/verdict.md` must list both ATC findings as evidence of what ATC costs in
+  practice: the write-on-every-path requirement and the `:alloc` hypothesis.
+- Before Milestone 1, finish the owner-requested pointer-free prototype. See the
+  decisions in `docs/claims.md`.
