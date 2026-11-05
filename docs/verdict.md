@@ -1,0 +1,13 @@
+# Verdict (draft: Milestone 5 not reached)
+
+Evidence collected so far, for the final write-up.
+
+## What ATC costs in practice
+
+1. **Write-on-every-path requirement.** ATC's generated proof fails if a path leaves a
+   pointee unwritten while another path writes it. The C needs `*px = *px;`, or a
+   redesign. See `docs/atc-reality-check.md`.
+2. **`:alloc` hypothesis.** ATC's theorem for pointer parameters only covers objects of
+   kind `:alloc`. Emil's callers pass struct members and stack locals, so it doesn't
+   literally cover any real call. Avoiding it needs a pointer-free design and a
+   hand-written wrapper, with an unproven wrapper and a measured speed cost without LTO.

@@ -4,9 +4,11 @@
 #
 #   STRICT_DIRS (spec and claim books): any trust tag, skipped proof, axiom or
 #       fast-cert use makes this script fail.
-#   ATC_DIRS (books that run ATC): owner-approved 2026-11-06. Only the tags in
-#       scripts/atc-allowed-ttags.txt are permitted. Skipped proofs, axioms,
-#       other tags and fast-cert still make this script fail.
+#   ATC_DIRS (books that run ATC): generator only, and back no claim. Only the tags
+#       in scripts/atc-allowed-ttags.txt are permitted. Skipped proofs, axioms, other
+#       tags and fast-cert still make this script fail.
+#   Replay books (scripts/atc-replay.sh): ATC's generated theorems re-proved with no
+#       ATC and no trust tags, under the same strict audit as STRICT_DIRS.
 set -uo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 TOOLS_DIR="${1:-${TOOLS_DIR:-$HOME/tools}}"
@@ -58,5 +60,12 @@ for d in "${ATC_DIRS[@]}"; do
     checked=$((checked+1))
   done
 done
+# Re-prove each ATC book's generated theorems with ATC and all trust tags removed.
+# Only these replay books, not the ATC books above, may back a claim.
+while read -r book fns; do
+  [ -n "$book" ] || continue
+  scripts/atc-replay.sh "$book" "$fns" || fail=1
+done < scripts/atc-books.txt
+
 [ "$checked" -gt 0 ] || { echo "NO CERTIFICATES CHECKED"; fail=1; }
 [ "$fail" = 0 ] && echo "CERTIFY OK ($checked books)" || { echo "CERTIFY FAILED: rules violated"; exit 1; }

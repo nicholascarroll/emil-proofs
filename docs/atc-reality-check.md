@@ -153,3 +153,64 @@ different `int`s, so that isn't a practical gap.
 
 Proof iterations so far on the shape prototype: 4 (missing `int` range hints; the
 write-back failure; shape B failed; shape A passed).
+
+## Pointer-free prototype (owner request)
+
+Source: `acl2/atc-scalar/three-functions.lisp`, generated `adjust_scalar.c`, hand-written
+`adjust_wrapper.c`. The 10^9 bound is again a prototype convenience.
+
+| Version | Result |
+|---|---|
+| F: three functions of scalars (`adjust_new_x`, `adjust_new_y`, `adjust_clamped`) | **Works** |
+| S: struct passed and returned by value, member written before the branches | ATC supports the types, but its generated proof fails at `adjust_value-lines_delta-IN-SCOPE-26` |
+| S: same, with that write removed and a guard requiring `clamped == 0` | Generated proof fails at `adjust_value-CORRECT-59` |
+
+The causes of the two struct failures weren't investigated. Reproductions are in
+`experiments/atc-failures/`.
+
+### Does the generated theorem have `:alloc` or pointer hypotheses?
+
+**No.** The three `-CORRECT` theorems were checked by searching the printed
+`adjust_new_x` theorem for `alloc`, `pointer`, `objdes` and `disjoint`: 0 matches. The
+hypotheses are that the state is a computation state, the function environment is this
+program's, all seven inputs are `int` values within the guard's bounds, and the
+execution limit is high enough. The conclusion also says the state is left unchanged:
+`(mv result compst)`.
+
+### What remains unproven
+
+| Item | Status |
+|---|---|
+| The wrapper: reads `*px` and `*py`, passes arguments in the right order, writes the results back | **Hand-written C, no theorem.** Evidence is testing and review only |
+| That the three results together behave as `adjustPoint` | Provable in ACL2 at Milestone 3, against the spec. Not done yet |
+| The wrapper calling generated functions compiled separately | Outside the theorem, whose function environment holds only the generated program |
+| Callers meeting the input bounds | A Milestone 2 question, and not proved by any of this |
+| `*program*` to C text, then compiler, hardware, C model, ACL2 and SBCL | Trusted, as for the pointer version |
+
+So the gap gets smaller and moves: it doesn't vanish. **`adjustPoint` as emil calls it
+would still not be proven.** What's proven would be the three value computations, for
+the values real callers pass, whichever storage they came from.
+
+### Effect on shape and effort
+
+| | Emil | Pointer version (A) | Pointer-free (F) |
+|---|---|---|---|
+| Generated C | n/a | 1 function, 7 extra writes | 3 functions, 0 pointers, no write-backs |
+| Hand-written C | 54 lines | None | 7-line wrapper body |
+| `-Wparentheses` warnings | 0 | 3 | 8 |
+| `.text` at `-O2` (gcc, bytes) | 236 | 235 | 657 (376 + 281) |
+| Time per call, separate files | 6.3 to 6.7 ns | 6.3 to 6.5 ns | 10.9 to 11.4 ns |
+| Time per call, F with `-flto` | | | 5.2 to 5.5 ns |
+| Attempts to get through ATC | | 4 (shape A's path) | 2, one being my own hint syntax error |
+| ATC book certification | | About 40s | 39s |
+
+Timings are three runs of one gcc build on a mix of inputs, so they're preliminary.
+Milestone 4 owns the real comparison. Each generated function re-evaluates the branch
+conditions, so F does the same tests up to three times. `-flto` removes that cost here,
+but emil's Makefile doesn't use it, so F would need that or a change in how it's compiled.
+
+The smoke test ran the wrapper on stack locals, struct members and heap objects: 0
+differences from emil on 8,192 inputs, with gcc and clang, and no sanitizer reports.
+
+Proof effort from here isn't measured. F replaces reasoning about writes with three plain
+functions, so I expect the spec equivalence to be simpler, but it hasn't been attempted.

@@ -1,5 +1,5 @@
-/* Rough, preliminary timing for the Milestone 0 report. Milestone 4 owns the real
 #define _POSIX_C_SOURCE 199309L
+/* Rough, preliminary timing for the Milestone 0 report. Milestone 4 owns the real
  * comparison. Uses a mix of valid-looking edits and points. */
 #include <stdio.h>
 #include <time.h>
