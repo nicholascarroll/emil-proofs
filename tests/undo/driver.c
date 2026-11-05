@@ -275,6 +275,7 @@ static int undo_all_count(void) { return 100000; }
 static int pending_redo;
 
 static int pending_cursor, pcx, pcy;
+static int run_left, run_kind, run_burst;
 
 static void gen_valid(struct op *o) {
 	memset(o, 0, sizeof *o);
@@ -298,13 +299,24 @@ static void gen_valid(struct op *o) {
 	int big = textsize() > 500;
 	int r = rnd(1000);
 	if (big && r < 500) r = 620; /* prefer a deletion when the text is big */
+	/* Runs long enough to reach UNDO_MERGE_LIMIT.  Sometimes in a burst,
+	 * which lifts the limit. */
+	if (run_left == 0 && chance(2)) {
+		run_left = 15 + rnd(45);
+		run_kind = rnd(3);
+		run_burst = chance(30);
+	}
+	if (run_left > 0) {
+		run_left--;
+		r = run_kind == 0 ? 0 : run_kind == 1 ? 400 : 500;
+	}
 	if (r < 300) {          /* typing at the cursor */
 		o->kind = K_INSCHAR;
 		o->sx = buf->cx; o->sy = buf->cy;
 		o->len = 1;
 		o->data[0] = rnd_byte();
 		if (o->data[0] == 0xC3) { o->data[1] = 0xA9; o->len = 2; }
-		o->burst = chance(15);
+		o->burst = chance(15) || (run_left > 0 && run_burst);
 	} else if (r < 360) {   /* newline at the cursor */
 		o->kind = K_INSCHAR;
 		o->sx = buf->cx; o->sy = buf->cy;
@@ -317,7 +329,7 @@ static void gen_valid(struct op *o) {
 		o->ex = buf->cx; o->ey = buf->cy;
 		if (buf->cx > 0) { o->sx = buf->cx - 1; o->sy = buf->cy; }
 		else { o->sy = buf->cy - 1; o->sx = buf->row[o->sy].size; }
-		o->burst = chance(15);
+		o->burst = chance(15) || (run_left > 0 && run_burst);
 	} else if (r < 560) {   /* C-d */
 		if (buf->cy == buf->numrows - 1 &&
 		    buf->cx == buf->row[buf->cy].size) { o->kind = K_CLOSE; return; }
@@ -325,7 +337,7 @@ static void gen_valid(struct op *o) {
 		o->sx = buf->cx; o->sy = buf->cy;
 		if (buf->cx < buf->row[buf->cy].size) { o->ex = buf->cx + 1; o->ey = buf->cy; }
 		else { o->ex = 0; o->ey = buf->cy + 1; }
-		o->burst = chance(15);
+		o->burst = chance(15) || (run_left > 0 && run_burst);
 	} else if (r < 600) {   /* yank */
 		o->kind = K_INSERT;
 		rnd_pos(&o->sx, &o->sy);
@@ -451,6 +463,8 @@ static void rnd_start(struct start *s) {
 
 static void apply_start(const struct start *s) {
 	buf = newBuffer();
+	/* newBuffer starts with one empty row: load the text as fileio does. */
+	bufferResetRows(buf);
 	for (int i = 0; i < s->nrows; i++)
 		insertRow(buf, i, s->rows[i], s->len[i]);
 	buf->cx = buf->cy = 0;

@@ -12,12 +12,12 @@ git -C "$repo" archive "$commit" | tar -x -C "$out/src"
 git -C "$repo" rev-parse "$commit" > "$out/commit"
 cd "$out/src"
 SAN="-g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
-make -j2 CFLAGS="$SAN -fPIE ${EXTRA_CFLAGS:-}" LDFLAGS="-fsanitize=address,undefined -pie" emil >make.log 2>&1 \
+make -j2 CFLAGS="$SAN -fPIE ${EXTRA_CFLAGS:-}" LDFLAGS="-fsanitize=address,undefined -pie ${EXTRA_CFLAGS:-}" emil >make.log 2>&1 \
   || { tail -20 make.log; exit 1; }
 api=""
 grep -q 'old_text' mutate.h && api="-DEMIL_OLD_API"
 objs=$(ls *.o | grep -vE '^(main|terminal)\.o$')
 cc -std=c99 -D_DEFAULT_SOURCE $SAN $api ${EXTRA_CFLAGS:-} -w -I. -Itests -c tests/stubs.c -o stubs.o.tmp
 cc -std=c99 -D_DEFAULT_SOURCE $SAN $api ${EXTRA_CFLAGS:-} -w -I. -Itests -x c "$here/driver.c" -x none $objs stubs.o.tmp \
-   -fsanitize=address,undefined -pie -lm -o "$out/driver"
+   -fsanitize=address,undefined -pie ${EXTRA_CFLAGS:-} -lm -o "$out/driver"
 echo "built $out/driver from $(cat "$out/commit") api=${api:-new}"
