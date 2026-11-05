@@ -21,6 +21,11 @@ To be weighed against proof at Milestone 5.
   large values.
 - **Found by tracing callers for claim 4, not by testing or proof:** the 10^9 bound was wrong, and
   stale window points can reach `adjustPoint`. Writing the hypotheses is what prompted the trace.
+- **Stale points are wider than the first trace showed.** Reading found the revert path, but instrumenting
+  emil and running its fuzzer found 636 more with no revert, and minimising them led to `killBuffer`. Testing
+  corrected my reading here, and proof wouldn't have: the theorems assume valid points.
+- **Emil's own fuzzer found a runaway memory failure (D4)** on a 6-key sequence, while I was auditing call sites.
+  This has nothing to do with proof.
 - **Found by writing the boundary table:** `adjust.h`'s return value doesn't mean "character lost",
   and no caller uses it.
 - Found by my own seeding mistake: the `lines_delta == 0` branch for insertions is redundant in value.

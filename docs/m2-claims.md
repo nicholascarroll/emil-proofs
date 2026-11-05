@@ -5,12 +5,39 @@ They're written as `defclaim` forms in `acl2/claims/statements.lisp`, and each b
 `defthm` of `(implies hyp concl)` in Milestone 3. `acl2/claims/spec.lisp` has the
 definitions.
 
-Each statement has been run on every case of a small domain (up to 3 lines of 2 characters,
+Each of the 17 statements has been run on every case of a small domain (up to 3 lines of 2 characters,
 inserted text of up to 2 lines of 2 characters, at `INT_MAX` and at a tight `IMAX` of 4).
 None failed, and every hypothesis was satisfied somewhere. Deliberately breaking the spec
 made the check fail in 4 of 5 controls, and a sixth, returning 1 for a point past the deletion, was caught by `delete-return-is-exact`. The fifth, weakening the overflow predicate, can't be
 seen there. Guard verification and `tests/m2/overflow_exact.c` cover that. This is testing of
 the statements, not evidence that they're proved.
+
+## The 15 statements
+
+**None of these are proved.** Every row also leaves out four things: emil's C (`adjust-spec` is
+written from it), whole UTF-8 characters (a "character" here is one byte in emil), sequences of edits,
+and anything about the wrapper.
+
+| # | Theorem | In plain English | Assumes | Doesn't cover |
+|---|---|---|---|---|
+| 1 | `insert-keeps-character-before` | A point before an insertion doesn't move and returns 0. It names the same character, and all the text up to and including it is unchanged. | Valid text, valid point, valid insertion. Point strictly before the start. | A point exactly at the insertion or after it (2, 5). |
+| 2 | `insert-keeps-character-after` | A point after an insertion moves so that it names the same character, and all the text from there to the end is unchanged. Returns 0. | Valid text, valid point, valid insertion. Point strictly after the start. | A point before or exactly at the insertion (1, 5). |
+| 3 | `delete-keeps-character-before` | A point before a deletion doesn't move and returns 0. It names the same character, and all the text up to and including it is unchanged. | Valid text, valid point, valid ordered deletion. Point strictly before the start. | A point at the start, inside, or after (4, 6, 7). |
+| 4 | `delete-keeps-character-after` | A point at or after a deletion's end moves so that it names the same character, and all the text from there to the end is unchanged. | Valid text, valid point, valid ordered deletion. Point at or after the end. | The return value (9). Points before the end (3, 6, 7). |
+| 5 | `insert-at-point-stays-before` | A point exactly at a real insertion stays and returns 0. **Same character stops here:** it now names the first inserted character, and the old one is at the insertion's end. | Valid text, valid insertion, non-empty text. The point is the insertion start. | Whether staying is the right behaviour for the editor. An empty insertion (10). |
+| 6 | `delete-at-start-stays` | A point at a real deletion's start stays and returns 0. **Same character stops here:** it now names what was at the deletion's end. | Valid text, valid ordered deletion, start isn't the end. The point is the start. | An empty deletion (11). It doesn't state separately that the old character is gone. |
+| 7 | `delete-inside-clamps` | A point strictly inside a deletion moves to the start and returns 1. **Same character stops here:** it now names what was at the deletion's end. | Valid text, valid point, valid ordered deletion. Point strictly between start and end. | The two ends (6, 8). Where the deleted text went. |
+| 8 | `delete-at-end-clamps-but-keeps-character` | A point at a real deletion's end moves to the start and returns 1. **Its character survives,** so 1 doesn't mean lost. | Valid text, valid ordered deletion, start isn't the end. The point is the end. | An empty deletion (11). |
+| 9 | `delete-return-is-exact` | A deletion returns 1 exactly when the point is after the start and at or before the end, otherwise 0: start out, end in. | Valid text, valid point, valid ordered deletion. | Insertions, whose 0 is in 1, 2 and 5. Why emil returns this, since no caller uses it. |
+| 10 | `empty-insert-changes-nothing` | Inserting nothing leaves the text and every valid point unchanged, and returns 0. | Valid text, valid point, valid start. Inserted text is one empty line. | Non-empty insertions. |
+| 11 | `empty-delete-changes-nothing` | Deleting from a position to itself leaves the text and every valid point unchanged, and returns 0. | Valid text, valid point, valid start. End equals start. | Non-empty deletions. |
+| 12 | `insert-keeps-point-valid` | After an insertion, the text is still well formed and the point is a valid position in it. | Valid text, valid point, valid insertion. | A point that was already invalid. That's false for stale window points (D2). |
+| 13 | `delete-keeps-point-valid` | After a deletion, the text is still well formed and the point is a valid position in it. | Valid text, valid point, valid ordered deletion. | A point that was already invalid. That's false for stale window points (D2). |
+| 14 | `insert-within-limits-cannot-overflow` | A valid point and insertion can't overflow if rows and row counts stay within emil's limits, before and after. | Valid text, valid point, valid insertion. Every row at most `IMAX - 1`, at most `IMAX` rows, before and after. | Invalid points. C itself (that's guard verification, 4a). That emil enforces the limits, which is by reading. |
+| 15 | `delete-within-limits-cannot-overflow` | A valid point and deletion can't overflow if rows and row counts stay within emil's limits, before and after. | Valid text, valid point, valid ordered deletion. Every row at most `IMAX - 1`, at most `IMAX` rows, before and after. | Invalid points. C itself (4a). That emil enforces the limits, which is by reading. |
+
+Two more were added at your request, alongside the guard and not replacing it: see claim 4c. The full
+forms of all 17 are below.
 
 ## How to read them
 
@@ -181,9 +208,8 @@ columns are bytes, so here "character" means one element of the line, which is a
 `adjust.h` and `test_adjust.c` chose it, and these statements only pin it down. "The character
 is gone" isn't stated as a separate fact: the theorems say what the point names afterwards.
 
-**Specification decision for you:** `adjust.h` says "inside a deleted region" without saying
-whether the ends count. These statements make the existing behaviour the spec: the start isn't
-inside, the end is. That's in the ledger as a new decision.
+**Specification decision, made by you:** `adjust.h` says "inside a deleted region" without saying
+whether the ends count. The start is out and the end is in. The header's wording is logged as defect D1.
 
 ## Claim 3: validity
 
@@ -245,6 +271,13 @@ on the path taken:
                  (t (in-int-p (+ y d) imax)))))))
 ```
 
+**In plain English:** work out which of the function's cases this point falls into, then ask whether
+every sum and difference that case computes fits in an `int`. The line difference `endy - starty` is
+computed on every call, so it always has to fit. A point before or inside the edit computes nothing else.
+A point on the end line of a deletion, or the insertion line, computes its new column. A point on a
+later line computes its new row. For example, a point at column `INT_MAX - 1` after a 2-byte
+insertion on the same line fails it, because its new column would be `INT_MAX + 1`.
+
 Evidence that it's exact: `tests/m2/overflow_exact.c` ran every combination of 9 corner values
 (`INT_MIN`, `INT_MIN + 1`, -2, -1, 0, 1, 2, `INT_MAX - 1`, `INT_MAX`) for all six numbers, with
 both `is_delete` values, under UBSan. **On 1,062,882 cases, the predicate and real overflow
@@ -285,6 +318,35 @@ both before and after the edit.
 **What this doesn't cover:** invalid points. For those, the predicate still says exactly when
 overflow happens, but nothing says the predicate holds.
 
+**4c. The predicate can be met, and a simple bound implies it.** Both were requested alongside the
+guard. Neither replaces it.
+
+```lisp
+(defclaim no-overflow-predicate-is-satisfiable ()
+  t
+  (adjust-no-overflow-p 0 0 0 0 0 0 nil 2147483647))
+```
+
+```lisp
+(defclaim half-range-cannot-overflow (x y sx sy ex ey del imax)
+  (and (natp imax)
+       (natp x) (natp y) (natp sx) (natp sy) (natp ex) (natp ey)
+       (<= (* 2 x) imax) (<= (* 2 y) imax)
+       (<= (* 2 sx) imax) (<= (* 2 sy) imax)
+       (<= (* 2 ex) imax) (<= (* 2 ey) imax))
+  (adjust-no-overflow-p x y sx sy ex ey del imax))
+```
+
+**In plain English:** the point and edit all at (0,0) satisfy the predicate, so the guard isn't
+vacuous. And if all six numbers are from 0 to `IMAX/2`, which is 1,073,741,823 for a 32-bit `int`, nothing
+can overflow.
+
+**What this doesn't cover:** it's only sufficient. A 1 GiB single-line file has a row of 1,073,741,824 bytes,
+one more than this bound, and emil can load it. So this bound is for reading, and the guard stays exact.
+
+The check caught a loosened hypothesis (`x` up to `IMAX`), after I'd widened the small domain to make that
+possible. My first version of the check couldn't see it.
+
 ## Does emil guarantee the hypotheses?
 
 Traced by reading emil `ac98ba0b`. **Partly: yes for the row limits, no for point validity.**
@@ -305,38 +367,41 @@ Traced by reading emil `ac98ba0b`. **Partly: yes for the row limits, no for poin
 |---|---|
 | Row size | At most `INT_MAX - 1`, enforced by `abort()` on the paths above. Not 10^9 |
 | Row count | At most `INT_MAX`, enforced by `abort()`. A file load refuses more than `INT_MAX / 2` |
-| Edit start and end | Valid and ordered on the paths I read: `deleteRange` orders and clamps them, and `bulkDelete` clamps them. **`bulkDelete` doesn't order them, and I haven't checked all of the roughly 30 call sites of the mutation functions** |
+| Edit start and end | No invalid or unordered edit found at any of the 50 sites, by reading and in about 2 million checked calls. **Most sites rely on an invariant, not a local check.** See `docs/m2-call-sites.md` |
 | `is_delete` | Any `int` is fine. Callers pass 0, 1 or a record's flag |
 | Mark and mark ring | Checked to be non-negative before the call. The sentinel is -1 |
-| **Other windows' cursor** | **No validity check, and no upper limit** |
+| **Other windows' cursor** | **No validity check, and no upper limit.** Stale in practice: see below |
 | Register points | No check, but they're set from the cursor |
 
-### Unbounded: a stale point in another window
+### Unbounded: stale points in other windows
 
-**Confirmed by running emil's code (`tests/m2/stale_window.c`).** With two windows on one buffer,
-when the file shrinks on disk and one window reverts, the other window's cursor isn't updated.
-Emil only corrects it when that window next gets focus. Until then, edits run `adjustPoint` on it:
+**Emil doesn't guarantee valid points in all windows.** It's wider than I first reported.
 
-```
-row 0 size after revert: 2
-other window's point after revert: (20,0), valid: NO
-after inserting 1 byte at (0,0): row size 3, other window's point (21,0), valid: NO
-```
+| Path | Evidence |
+|---|---|
+| `revert` to a shorter file (`tests/m2/stale_window.c`) | Reproduced: other window at (20,0) on a row of size 2 |
+| `killBuffer` re-points windows at the next buffer and keeps their cursors (`tests/m2/stale_kill.c`) | Reproduced: other window at (20,8) in a 3-row buffer |
+| `showPopupBuffer`: `createWindow` copies the current cursor, then the window gets the popup buffer | Reading only. The fuzzer's two minimised examples both use `C-x r V`, which shows a popup |
+
+**Measured:** across 2,999 fuzz seeds, deletions saw **636 stale points, all in other windows' cursors,
+in 70 runs, and none of those runs had a revert.** So revert isn't the common path. I haven't shown that the
+paths above explain all 636, or that there are no others. No stale mark appeared.
 
 Consequences:
-- Claims 1 to 3 and 4b **don't apply** to this point, because their hypotheses are false for it.
-- Its column has no upper bound. It grows with insertions before it on its line, and nothing
-  checks it. Overflow would still need a column near `INT_MAX`, so it would take either about
-  2^31 inserted bytes or a stale point from an enormous row. It's unbounded, not likely.
-- If it did overflow, it would be undefined behaviour in emil's C. The generated functions would
-  be outside their guard in the same way.
-- I didn't find a user-visible failure beyond that window's status line showing the stale line
-  number. The status line's column lookup is bounded. I haven't changed anything in emil.
+- Claims 1 to 3 and 4b **don't apply** to these points, because their hypotheses are false for them.
+- A stale point's row and column have no upper bound. Overflow would still need a value near `INT_MAX`:
+  about 2^31 inserted bytes, or a stale point from an enormous buffer. It's unbounded, not likely.
+- If it did overflow, that would be undefined behaviour in emil's C. The generated functions would be
+  outside their guard in the same way.
+- The effect I found is a stale line number in that window's status line. The column lookup there is
+  bounded. Emil's fuzzer ran these paths under ASan and UBSan and reported nothing on them, but I haven't
+  ruled out other effects.
 
-I didn't find other stale-point paths, but I didn't search exhaustively. `showOutputBuffer`
-resets rows without touching window cursors, so it's a candidate I didn't test. Registers aren't
-one: after a revert, a register still names the destroyed buffer, stops being adjusted, and is
-rejected at jump by `bufferAlive`.
+Registers aren't affected the same way. After a revert, a register still names the destroyed buffer,
+stops being adjusted, and is rejected at jump by `bufferAlive`.
+
+Decided: these points stay outside every claim, Milestone 4 tests that the generated C and emil agree on
+them, and this is logged as defect D2, not fixed.
 
 ## What each theorem assumes
 
@@ -344,7 +409,7 @@ rejected at jump by `bufferAlive`.
 |---|---|---|
 | Text is a non-empty list of lines | All | Model. See the differences below |
 | The point is valid in the text before the edit | 1, 2 (where it takes a point), 3, 4b | **False for stale window points** |
-| The edit is valid and ordered | All | Holds on the paths I read, but not checked at every call site |
+| The edit is valid and ordered | All | No violation found at any of the 50 sites, but most rely on the cursor invariant or undo history: see `docs/m2-call-sites.md` |
 | Inserted text's end is `computeInsertEnd`'s answer | Insert claims | Model definition, matching `undo.c` by reading |
 | Row limits, before and after the edit | 4b | Enforced by `abort()` in emil |
 | `int` is 32-bit two's complement | 4a | ATC's C model |
@@ -378,15 +443,7 @@ This is a sketch, not exact ACL2, and I'll show you the exact form in Milestone 
 ATC's replayed theorems, it would connect claims 1 to 3 to the generated value functions. It
 wouldn't connect them to the wrapper, which is testing only, as the ledger says.
 
-## Questions for you
+## Status of your review
 
-1. **Do you approve the statements?** In particular, are you happy with "same character" meaning
-   `char-at` plus `text-from` or `text-through`?
-2. **Should "inside a deleted region" mean the start is out and the end is in?** That's emil's
-   current behaviour. The alternative is to treat the header's wording as a defect to report.
-3. **How should stale window points be treated?** I recommend recording them in the ledger as
-   outside every claim, with Milestone 4 testing the generated C and emil on them for agreement.
-   The theorems stay as they are, because weakening them to cover invalid points would prove
-   nothing useful.
-4. **Is 4a's guard right?** I recommend the exact, path-sensitive `adjust-no-overflow-p`, not a
-   simpler but stricter numeric bound. The cost is a guard that's harder to read.
+Decided: start out and end in, stale points outside the claims, and the exact guard with its two
+corollaries. **Not yet approved: the statements themselves.** Milestone 3 doesn't start until they are.

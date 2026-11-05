@@ -5,6 +5,7 @@ Milestone 1 domain. **Nothing is proved yet.** Full statements are in `docs/m2-c
 
 | Claim | Formal theorem | Evidence | Assumptions | Owner review |
 |---|---|---|---|---|
+| Edit hypothesis at emil's call sites | Not a theorem: `docs/m2-call-sites.md` | Read at all 50 sites, no violation in about 2 million checked calls | Most sites rely on the cursor invariant or undo history | Awaiting |
 | 1. Character preservation | `insert-keeps-character-before`, `insert-keeps-character-after`, `delete-keeps-character-before`, `delete-keeps-character-after` | Tested | Valid text, point and ordered edit. Model differences in `docs/m2-claims.md` | Awaiting |
 | 2. Exact boundaries | `insert-at-point-stays-before`, `delete-at-start-stays`, `delete-inside-clamps`, `delete-at-end-clamps-but-keeps-character`, `delete-return-is-exact`, `empty-insert-changes-nothing`, `empty-delete-changes-nothing` | Tested | As above | Awaiting |
 | 3. Validity | `insert-keeps-point-valid`, `delete-keeps-point-valid` | Tested | As above. False hypothesis for stale window points | Awaiting |
@@ -29,6 +30,6 @@ Milestone 1 domain. **Nothing is proved yet.** Full statements are in `docs/m2-c
 | 2026-11-06 | "Inside a deleted region" means after the start and at or before the end: start out, end in. The header's wording is logged as emil documentation defect D1. | Claim 2 | Approved by owner |
 | 2026-11-06 | Proposed: "same character" means `char-at` plus `text-from` or `text-through`, because `char-at` alone can't distinguish newlines. | Claim 1 | Awaiting owner review |
 | 2026-11-06 | The 10^9 prototype bound is dropped. The guard is the exact, path-sensitive `adjust-no-overflow-p`, because emil's legal inputs exceed 10^9. Also to be proved: the predicate is satisfiable, and a simple sufficient bound as a readable corollary, which doesn't replace the guard. | Claim 4 and generated C | Approved by owner |
-| 2026-11-06 | **emil does not guarantee valid points in all windows.** Reproduced by `tests/m2/stale_window.c`: after a revert to a shorter file, another window's point stays at (20,0) on a row of size 2, and later edits keep adjusting it. Stale points are outside every claim. Milestone 4 tests that the generated C agrees with emil on them. Logged as defect D2, not fixed. | All claims | Approved by owner |
+| 2026-11-06 | **emil does not guarantee valid points in all windows.** Reproduced by `tests/m2/stale_window.c`: after a revert to a shorter file, another window's point stays at (20,0) on a row of size 2, and later edits keep adjusting it. `tests/m2/stale_kill.c` reproduces a second path through `killBuffer`, and emil's fuzzer saw 636 stale points with no revert. Stale points are outside every claim. Milestone 4 tests that the generated C agrees with emil on them. Logged as defect D2, not fixed. | All claims | Approved by owner |
 | 2026-11-06 | `adjustPoint`'s return value is unused. Logged as refactor candidate R1, not changed. | Emil | Approved by owner |
 | 2026-11-06 | Supporting evidence only: parsing the generated C with C$ matches `*program*` for this output. Not proof of the printer. | `*program*` to C file step | Recorded per owner request |

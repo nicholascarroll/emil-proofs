@@ -57,12 +57,13 @@ static void proofs_point(struct buffer *b, int x, int y, const char *kind) {
 	proofs_points_del++;
 	if (proofs_pos_ok(b, x, y)) return;
 	proofs_stale_del++;
+	if (getenv("PROOFS_STALE_ABORT")) abort(); /* lets the fuzzer minimise a stale point */
 	const char *p = getenv("PROOFS_AUDIT_LOG");
 	if (!p) return;
 	int fd = open(p, O_WRONLY | O_APPEND | O_CREAT, 0666);
 	if (fd < 0) return;
 	char b1[120];
-	int n = snprintf(b1, sizeof b1, "STALE %s point=(%d,%d) numrows=%d rowsize=%d\n", kind, x, y,
+	int n = snprintf(b1, sizeof b1, "STALE pid=%d %s point=(%d,%d) numrows=%d rowsize=%d\n", (int)getpid(), kind, x, y,
 			 b->numrows, (y >= 0 && y < b->numrows) ? b->row[y].size : -1);
 	(void)!write(fd, b1, (size_t)n);
 	close(fd);
@@ -88,4 +89,12 @@ old = "\t\t\tstruct undo *n = buf->redo;\n"
 assert old in s
 s = s.replace(old, old + "\t\t\tproofs_audit(buf, n->startx, n->starty, n->endx, n->endy, n->delete, !n->delete);\n", 1)
 s = s.replace('#include "undo.h"\n', '#include "undo.h"\nvoid proofs_audit(struct buffer *b, int sx, int sy, int ex, int ey, int del, int start_only);\n', 1)
+open(p, "w").write(s)
+# Note each successful revert, so a stale point can be traced to one or not
+p = f"{d}/fileio.c"; s = open(p).read()
+old = "\tdestroyBuffer(buf);\n}\n\n/*\n * Open the target file, truncate it"
+assert old in s
+s = s.replace(old, """\t{ const char *lp = getenv("PROOFS_AUDIT_LOG");
+\t  if (lp) { FILE *lf = fopen(lp, "a"); if (lf) { fprintf(lf, "REVERT pid=%d\\n", (int)getpid()); fclose(lf); } } }
+""" + old, 1)
 open(p, "w").write(s)

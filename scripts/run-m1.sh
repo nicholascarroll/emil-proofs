@@ -27,6 +27,7 @@ python3 "$T/m1/mutants.py" "$EM" "$B" "$T/m1/harness.c" "$T/m1/emil_stub.c" "$B/
 cc -std=c99 -D_DEFAULT_SOURCE -O2 -w -Iemil-copy -c emil-copy/adjust.c -o emil-copy/adjust.o
 OBJ="decoder.o unicode.o buffer.o region.o undo.o transform.o find.o pipe.o register.o fileio.o display.o keymap.o edit.o prompt.o util.o completion.o history.o base64.o abuf.o window.o ctags.o adjust.o mutate.o wrap.o motion.o dbuf.o emil_subprocess.o palette.o backup.o message.o tests/stubs.o"
 (cd emil-copy && cc -std=c99 -D_DEFAULT_SOURCE -O1 -g -w -I. -Itests "$T/m2/stale_window.c" $OBJ -o stale && echo "== stale window" && ./stale)
+(cd emil-copy && cc -std=c99 -D_DEFAULT_SOURCE -O1 -g -w -I. -Itests "$T/m2/stale_kill.c" $OBJ -o stalekill && echo "== stale window, killed buffer" && ./stalekill)
 cd "$here/build/m2"
 P="$here/acl2/atc-scalar"; F="-std=c99 -D_DEFAULT_SOURCE -O1 -w -fsanitize=signed-integer-overflow -fno-sanitize-recover=all"
 awk '/^int adjustPoint/{p=1} p{print} p&&/^}/{exit}' "$EM/adjust.c" > emil_only.c

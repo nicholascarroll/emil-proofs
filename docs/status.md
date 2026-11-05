@@ -2,18 +2,19 @@
 
 ## Current state
 
-- Milestone 2: statements proposed. **Stopped for owner review. Nothing is proved.**
+- Milestone 2: statements proposed. **Stopped: the owner hasn't approved the statements. Nothing is proved.**
 - Remote: `nicholascarroll/emil-proofs`, working branch `milestone-2`.
 - Pins: see `scripts/versions.env`. Generated C uses the pointer-free version.
 
 ## Next step
 
-Wait for the owner's answers to the questions at the end of `docs/m2-claims.md`. Then start
-Milestone 3, beginning with the ACL2 pin recheck required by `CLAUDE.md`.
+Wait for the owner to approve the table in `docs/m2-claims.md`. Then start Milestone 3, beginning with the
+ACL2 pin recheck required by `CLAUDE.md`.
 
 ## Reports
 
-`docs/m1-testing.md`, `docs/m2-claims.md`, `docs/atc-reality-check.md`, `docs/trust-and-pin.md`.
+`docs/m2-claims.md`, `docs/m2-call-sites.md`, `docs/emil-defects.md`, `docs/m1-testing.md`,
+`docs/atc-reality-check.md`, `docs/trust-and-pin.md`.
 
 ## Effort log (for docs/verdict.md)
 
@@ -30,3 +31,5 @@ Milestone 3, beginning with the ACL2 pin recheck required by `CLAUDE.md`.
 | M1 | Exhaustive harness, 5x5 | 7m31s |
 | M2 | Corner-case overflow check, per function | About 3m25s |
 | M2 | Statement check on the small domain | Under 1s |
+| M2 | Full `certify.sh` with all 17 statements, community books already built | 10m45s |
+| M2 | Emil's suite and 3,000 fuzz seeds, instrumented | 49s and 200s |
