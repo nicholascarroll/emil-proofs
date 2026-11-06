@@ -4,11 +4,11 @@
 
 - Pilot finished: `docs/verdict.md`, branch `milestone-3`.
 - **Undo study finished, branch `undo-model`.** One page: `docs/undo-report.md`. Stages: `docs/undo-stage1.md`, `docs/undo-stage2.md`, `docs/undo-statements.md`.
-- Emil refactor: `patches/undo-refactor/`, 15 commits on `ac98ba0b`, ending at `18d417c`. The owner applies them; Claude has no push rights to emil. `patches/filename-rule/` is one more patch, optional, on `18d417c`.
+- Emil refactor: `patches/undo-refactor/`, 15 commits on `ac98ba0b`, ending at `18d417c`. The owner applies them; Claude has no push rights to emil. `patches/filename-rule/` is 4 more patches, optional, on `18d417c`, ending at `14a69a0`.
 
 ## Next step
 
-Owner decides on the `*Tags*` fix (sized in `docs/undo-stage2.md`).
+None planned. The owner applies the patches.
 
 ## Reports
 

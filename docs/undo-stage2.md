@@ -236,5 +236,28 @@ In all 1,521, the invalid row was present before any key.
 
 **Assumption 5 and the README sentence:** the minibuffer path is closed, as the bad name can't become a buffer. `*Tags*` is still open. A directory holding a bad byte can still be the working directory; only names are checked.
 
-**`*Tags*`, not done:** sanitise the scope, file and pattern fields in `menuRow`. About 12 to 18 source lines and 30 to 40 test lines, by estimate.
+## Final stack, `14a69a0` (owner request)
+
+`patches/filename-rule/`, four patches on `18d417c`. The first 15 are unchanged. All 19 applied to `ac98ba0b` give the `14a69a0` tree.
+
+| Patch | Commit | Source lines | Test lines |
+|---|---|---|---|
+| File path rule | `9d6a32d` | +83 -20 | +197 |
+| `*Tags*` rows | `7068e5e` | +49 -8 (estimated 12 to 18) | +75 |
+| Docs: `emil.1`, README, CHANGELOG, including the startup exit | `f903d6f` | n/a | n/a |
+| `fuzz_keys.c`: leads on `C-x C-c` | `14a69a0` | n/a | +15 -1 (tool, applies alone on `18d417c`) |
+
+`*Tags*`: each field goes through `utf8SanitizeLine`, keeping tabs. With the sanitising removed, 2 of the new tests fail. In a real editor, the tags-menu scenario logs no invalid rows.
+
+Fuzz fix: with the added lines, printed warnings now equal the logged ones, 2,077 of 2,077. The fuzzer's own text gives 0.
+
+**Reruns at `14a69a0`:** `make test` and sanitizers pass, no build warnings. Differential: 3.1M steps, 0 disagreements, 0 crashes, the same 8 "lie" cursors. Key fuzz with history checks, 3,000 seeds: seed 1127 only, 0 refusals, no newline rows. UTF-8 fuzz, own text: 0 invalid rows, 810 writes, all valid.
+
+**Refcheck, `18d417c` against `14a69a0`:** 117 of 2,000 seeds differ. The same run on a scratch stack with the rule's four checks turned off and the other patches kept: **0 of 2,000**. So all 117 come from the rule. The minimised examples are a newline in a file prompt (`C-x C-r C-o RET`, `C-x C-w / C-o RET`), once accepted and now refused. Later keys then land differently, which is why buffers, files and windows differ.
+
+**Refcheck, `ac98ba0` against `14a69a0`:** 352 differ, the 260 from before plus 92. None left. Many earlier seeds changed group, because refusals shift what follows.
+
+**Limits:** no test runs `fileio.c:931` (the fuzz does), `:1751` or `:1762-1763` (`cd` can't return). The fuzz never reaches the `*Tags*` lines. `newtests` didn't run for `ctags` and `fileio`. I read the 2 minimised examples, not all 117.
+
+**Verdict:** go for the filename and `*Tags*` patches.
 
