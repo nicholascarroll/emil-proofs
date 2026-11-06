@@ -1,7 +1,7 @@
 From b0638c8daca508569ac343f58828243c10294c6b Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 12:10:30 +1100
-Subject: [PATCH 10/11] Route rebuilds of special buffers with history through
+Subject: [PATCH 10/12] Route rebuilds of special buffers with history through
  a normal replace
 
 bufferResetRows kept the history, so a special buffer that was made writable,

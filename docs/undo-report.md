@@ -1,6 +1,6 @@
 # Undo refactor and proofs: one page
 
-Emil `ac98ba0b` plus 11 patches (`patches/undo-refactor/`, ending at `415c942`). ACL2 `7ac80c83`; 31 newer commits, none mentioning soundness in their messages, so the pin stays.
+Emil `ac98ba0b` plus 12 patches (`patches/undo-refactor/`, ending at `53f223a`). The proofs, differential and refcheck ran at `415c942`; the last patch changes only the register views and their test. ACL2 `7ac80c83`; 31 newer commits, none mentioning soundness in their messages, so the pin stays.
 
 **Assumption 2, "all text changes go through edits, extensions, undo and redo", is currently false in U2 and U3 on `main`.** On the patched branch those two paths are fixed, and the key fuzz found no mismatch. That is test evidence. The proofs still assume it.
 
@@ -28,7 +28,7 @@ Certified from clean by `scripts/certify.sh`, with no trust tags, skipped proofs
 2. All text changes go through the modelled operations (above).
 3. The history isn't cleared during the sequence.
 4. The buffer isn't read-only and doesn't become so.
-5. **At least one row, and no newline byte in a row. This is false in one case:** a filename containing a newline, shown by `C-x r V` in `*Output*`. 10 of 3,000 fuzz seeds. Not fixed.
+5. **At least one row, and no newline byte in a row.** The register views are fixed (`53f223a`). **Still false in one known case:** a buffer whose filename holds a newline, listed by the buffer prompt's TAB in `*Completions*`. See `docs/undo-stage2.md`.
 6. Replacement text is a list of bytes.
 7. No `INT_MAX` overflow, and allocation succeeds.
 
@@ -54,5 +54,5 @@ Certified from clean by `scripts/certify.sh`, with no trust tags, skipped proofs
 
 ## For you to decide
 
-- Fix the newline in `*Output*`, which is what keeps assumption 5 false.
+- Fix the newline in `*Completions*`, which is what keeps assumption 5 false.
 - Behaviour changes to accept: `docs/undo-stage2.md`, plus U2 (undo in a prompt now undoes TAB and `/`) and U3 (an edited special buffer's rebuild is undoable, and may gain a final empty row).

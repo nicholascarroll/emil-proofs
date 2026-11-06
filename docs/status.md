@@ -4,11 +4,11 @@
 
 - Pilot finished: `docs/verdict.md`, branch `milestone-3`.
 - **Undo study finished, branch `undo-model`.** One page: `docs/undo-report.md`. Stages: `docs/undo-stage1.md`, `docs/undo-stage2.md`, `docs/undo-statements.md`.
-- Emil refactor: `patches/undo-refactor/`, 11 commits on `ac98ba0b`. The owner applies them; Claude has no push rights to emil.
+- Emil refactor: `patches/undo-refactor/`, 12 commits on `ac98ba0b`. The owner applies them; Claude has no push rights to emil.
 
 ## Next step
 
-None planned. Owner decides on the newline-in-row case.
+None planned. Owner decides on the newline in `*Completions*`.
 
 ## Reports
 

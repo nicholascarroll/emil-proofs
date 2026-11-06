@@ -104,3 +104,30 @@ Owner's decisions: keep the replay check and the C-t fix. The stuck state is a k
 **Key fuzz at `415c942`, 3,000 seeds with truncated UTF-8 lines added:** 0 history mismatches, 0 replay refusals, 0 invalid ranges in any buffer. 11 failures: 10 newline-in-row (assumption 5), and 1127 (D4). Assumption 2 holds for U2 and U3 in this test. Other unrecorded paths could exist that the fuzz doesn't reach.
 
 **Refcheck at `415c942`:** see `docs/undo-report.md`. 24 findings: 5 divergence groups, 9 unminimised groups (listed as incomplete), footprint changes from the rebuild helper and status messages, comments still naming `insertChar`, and changed lines no test runs.
+
+## Newlines in rows (owner request after the report)
+
+**Fix (`53f223a`):** `C-x r V` wrote a point register's filename into a row as it was. It now goes through `utf8SanitizeLine`, in both `*Output*` and the `*Register Preview*` that the same keys show first. A newline shows as `^J`, as do other control bytes. Valid UTF-8 is unchanged. Names over 159 bytes are cut a little sooner than before.
+
+**Test:** `test_register_point_filename_newline`. On the old code its `*Output*` assertions fail. Its preview assertion passes on both, because the renderer also draws a newline as `^J`, so the unit test doesn't cover the preview. The row log below does.
+
+**Every way to put bytes into a row:**
+
+| Path | Can hold a newline? | How I know |
+|---|---|---|
+| `completion.c:291` `*Completions*` for the buffer prompt (and search prompt, same list) | **Yes** | `repro_paths completion-buffer-newline`: row `qq\x0Ayy`. **Not fixed; for you** |
+| `register.c` headers and preview | Not now | Fixed |
+| `completion.c:366` `*Completions*` for files and commands | No | File scan refuses names the minibuffer can't hold; `repro_paths completion-file-newline` lists nothing. Commands are fixed names |
+| `completion.c:248` minibuffer text | No | Splits on newline |
+| `ctags.c:454` tag menu | No | Fields come from one line of the tags file. From reading |
+| `fileio.c:550,1398` file and stdin lines | No | `getline`, with line endings stripped. From reading |
+| `buffer.c` `bufferLoadBlob` (registers, pipe, palette, stdin) | No | Splits on newline |
+| `undo.c` `bulkInsertRaw`, and so all mutations | No | Splits on newline |
+| `mutate.c` rebuild | No | Splits on newline |
+| `rowInsertChar` | Could | No caller outside tests now. From grep |
+
+**Limit:** this is one search of the `insertRow`, `appendRowRaw`, `rowInsertChar` and direct `chars` writes in non-test code. It rests partly on reading.
+
+**Reruns at `53f223a`:** `make test` passes, sanitizers pass, no build warnings. Key fuzz, 3,000 seeds with truncated UTF-8 lines: 0 rows with a newline, whether checked after each key or logged at each row created, 0 history mismatches, 0 replay refusals, 0 invalid ranges. One failure: 1127, the known D4. The fuzz doesn't hit the `*Completions*` case: it took a direct reproduction to show it.
+
+**So assumption 5 is still false in that one case.** The proofs are unchanged. Differential and refcheck weren't rerun, as you didn't ask.

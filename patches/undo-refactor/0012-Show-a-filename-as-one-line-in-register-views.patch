@@ -1,0 +1,129 @@
+From 53f223aaaa99137b63346b84e1b31276ef308a14 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 13:20:13 +1100
+Subject: [PATCH 12/12] Show a filename as one line in register views
+
+C-x r v and C-x r V wrote a point register's filename into a row as it was,
+and a filename can hold a newline, which is emil's row separator and never a
+byte in a row.  Control bytes in the name now show as ^X.  Valid UTF-8 is unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ register.c                    | 17 +++++++-----
+ tests/test_register_preview.c | 50 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 61 insertions(+), 6 deletions(-)
+
+diff --git a/register.c b/register.c
+index 4470595..c60c077 100644
+--- a/register.c
++++ b/register.c
+@@ -82,6 +82,13 @@ static void formatRegName(char *out, size_t outsz, int reg) {
+ 	}
+ }
+ 
++/* A buffer's name, as one line.  A filename can hold any byte, and a
++ * row must not hold a newline, so these views show it as ^J. */
++static void formatBufferName(char *out, size_t outsz, const struct buffer *buf) {
++	const char *fname = buf->filename ? buf->filename : "*scratch*";
++	utf8SanitizeLine((const uint8_t *)fname, strlen(fname), out, outsz);
++}
++
+ /* ---- Register Preview (shown before prompt) ---- */
+ 
+ static void showRegisterPreview(void) {
+@@ -106,9 +113,8 @@ static void showRegisterPreview(void) {
+ 					 "%s: stale point (buffer closed)",
+ 					 name);
+ 			} else {
+-				const char *fname = pt->buf->filename ?
+-							    pt->buf->filename :
+-							    "*scratch*";
++				char fname[160];
++				formatBufferName(fname, sizeof(fname), pt->buf);
+ 				snprintf(
+ 					line, sizeof(line),
+ 					"%s: buffer position: buffer %s, line %d col %d",
+@@ -184,9 +190,8 @@ static void showRegisterOutput(int reg) {
+ 				 "Register %s: stale point (buffer closed)",
+ 				 name);
+ 		} else {
+-			const char *fname = pt->buf->filename ?
+-						    pt->buf->filename :
+-						    "*scratch*";
++			char fname[160];
++			formatBufferName(fname, sizeof(fname), pt->buf);
+ 			snprintf(
+ 				header, sizeof(header),
+ 				"Register %s contains the buffer position: buffer %s, line %d col %d",
+diff --git a/tests/test_register_preview.c b/tests/test_register_preview.c
+index 02b8884..7a1ad7c 100644
+--- a/tests/test_register_preview.c
++++ b/tests/test_register_preview.c
+@@ -22,6 +22,7 @@
+ #include "register.h"
+ #include "keymap.h"
+ #include <string.h>
++#include "buffer.h"
+ 
+ /* "ab" then 25 x U+65E5: the 60-byte cut falls one byte into the 20th
+  * character. */
+@@ -100,9 +101,58 @@ void setUp(void) {
+ void tearDown(void) {
+ }
+ 
++/* C-x r V showed a point register's filename raw.  A filename can hold a
++ * newline, and '\\n' is emil's row separator, never a byte in a row. */
++void test_register_point_filename_newline(void) {
++	initTestEditor();
++	makeMinibuffer();
++	const char *lines[] = { "text" };
++	struct buffer *buf = make_test_buffer_lines(lines, 1);
++	free(buf->filename);
++	buf->filename = xstrdup("a\nb\xe6\x97\xa5");
++
++	E.registers['a'].rtype = REGISTER_POINT;
++	E.registers['a'].data.point.buf = buf;
++	E.registers['a'].data.point.cx = 0;
++	E.registers['a'].data.point.cy = 0;
++
++	/* The preview, drawn while the prompt waits. */
++	int quit[] = { CTRL('g') };
++	scriptKeys(quit, 1);
++	muteStdout();
++	viewRegister();
++	unmuteStdout();
++	clearKeys();
++	TEST_ASSERT(E.render_buf.len > 0);
++	static const char want[] = "a^Jb\xe6\x97\xa5";
++	int found = 0;
++	for (int i = 0; i + 7 <= E.render_buf.len; i++)
++		if (memcmp(E.render_buf.b + i, want, 7) == 0)
++			found = 1;
++	TEST_ASSERT(found);
++
++	/* The output: a real newline would have been inside row 0. */
++	int pick[] = { 'a' };
++	scriptKeys(pick, 1);
++	muteStdout();
++	viewRegister();
++	unmuteStdout();
++	clearKeys();
++	struct buffer *out = findOrCreateSpecialBuffer("*Output*");
++	TEST_ASSERT(out->numrows >= 1);
++	const char *row = (const char *)out->row[0].chars;
++	TEST_ASSERT(memchr(row, '\n', out->row[0].size) == NULL);
++	TEST_ASSERT(strstr(row, "buffer a^Jb\xe6\x97\xa5, line 1") != NULL);
++
++	E.registers['a'].rtype = REGISTER_NULL;
++	freeMinibuffer();
++	cleanupTestEditor();
++}
++
+ int main(void) {
+ 	TEST_BEGIN();
+ 	RUN_TEST(test_register_preview_cuts_on_character_boundary);
++	RUN_TEST(test_register_point_filename_newline);
+ 	RUN_TEST(test_render_incomplete_sequence_at_row_end);
+ 	RUN_TEST(test_cols_to_bytes_stops_at_span_end);
+ 	return TEST_END();

@@ -56,7 +56,7 @@ Statements in `docs/undo-statements.md`, formal text in `acl2/undo/statements.li
 | C. Coalesced undo equals separate undos | `claim-c-holds` (`coalesce.lisp`) | **Proved** on the model | Same, plus the definition of a run | Approved |
 | The model behaves as emil's C | None | Tested: differential, 3.1M steps | Generator's reach | n/a |
 | Text changes only through the history | None | **Assumed. False in U2 and U3 on `main`;** tested on the branch | | Accepted by owner |
-| At least one row, no newline byte in a row | None | **Assumed. False in one case:** filename with a newline in `*Output*` | | **New: for owner** |
+| At least one row, no newline byte in a row | None | **Assumed. Still false in one case:** buffer filename with a newline in `*Completions*`. Register views fixed | | **For owner** |
 
 Spec decisions: invalid range refused; buffers with no rows out of scope; a run's first edit doesn't fold into an earlier record.
 Known limitation: a record that doesn't match the text makes undo refuse and stay stuck at it until the history is cleared.

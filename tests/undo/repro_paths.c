@@ -3,6 +3,7 @@
 #include "emil.h"
 #include "buffer.h"
 #include "edit.h"
+#include "completion.h"
 #include "mutate.h"
 #include "undo.h"
 #include "test_harness.h"
@@ -83,6 +84,47 @@ int main(int argc, char **argv) {
 		show("undo  ", b);
 		doRedo(b, 1);
 		show("redo  ", b);
+	} else if (!strcmp(c, "completion-file-newline") ||
+		   !strcmp(c, "completion-buffer-newline")) {
+		/* Names that share only the typed prefix, so a second TAB lists
+		 * them in *Completions*, one holding a newline. */
+		int files = !strcmp(c, "completion-file-newline");
+		makeMinibuffer();
+		const char *d = argc > 2 ? argv[2] : ".";
+		char a[512], b2[512], t[512];
+		struct buffer *cur = make_test_buffer("x");
+		E.edbuf = cur;
+		if (files) {
+			snprintf(a, sizeof a, "%s/xx\nyy", d);
+			snprintf(b2, sizeof b2, "%s/xxz", d);
+			fclose(fopen(a, "w"));
+			fclose(fopen(b2, "w"));
+			snprintf(t, sizeof t, "%s/xx", d);
+		} else {
+			struct buffer *n1 = newBuffer(), *n2 = newBuffer();
+			n1->filename = xstrdup("qq\nyy");
+			n2->filename = xstrdup("qqz");
+			n1->next = n2;
+			n2->next = E.headbuf;
+			E.headbuf = n1;
+			snprintf(t, sizeof t, "qq");
+		}
+		mutateInsert(E.minibuf, 0, 0, (const uint8_t *)t, (int)strlen(t), NULL, NULL);
+		E.minibuf->cx = (int)strlen(t);
+		E.minibuf->cy = 0;
+		for (int i = 0; i < 2; i++)
+			handleMinibufferCompletion(E.minibuf, files ? PROMPT_FILES : PROMPT_BUFFER);
+		struct buffer *cb = findOrCreateSpecialBuffer("*Completions*");
+		int found = 0;
+		for (int i = 0; i < cb->numrows; i++)
+			if (cb->row[i].size && memchr(cb->row[i].chars, '\n', cb->row[i].size))
+				found = 1;
+		show("completions", cb);
+		printf("row with newline byte: %s\n", found ? "YES" : "no");
+		if (files) {
+			remove(a);
+			remove(b2);
+		}
 	} else {
 		return 2;
 	}
