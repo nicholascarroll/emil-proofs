@@ -1,0 +1,477 @@
+From 9d6a32d17f4edee65925297cb5b042f61d49fa5a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 14:33:27 +1100
+Subject: [PATCH] Refuse a file path with a control byte or invalid UTF-8
+
+A path must be valid UTF-8 with no C0 control byte or DEL.  pathNameAllowed
+states the rule, replacing completion.c's nameInsertable, and bufferSetFilename
+is how a path becomes a buffer's name.  Four callers: editorOpen, the first
+save, C-x C-w and cd.  Saves check before the overwrite prompt; a refusal leaves
+the old name.  cd works out every rebased name first and refuses if any fails.
+
+A file with such a name can't be opened from emil; rename it first.  The display
+fixes stay: register views also cut long names, and *Tags* isn't covered here.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ buffer.c            |   9 ++
+ buffer.h            |   6 ++
+ completion.c        |  11 +--
+ fileio.c            |  66 ++++++++++++---
+ tests/test_fileio.c | 197 ++++++++++++++++++++++++++++++++++++++++++++
+ unicode.c           |   8 ++
+ unicode.h           |   3 +
+ 7 files changed, 280 insertions(+), 20 deletions(-)
+
+diff --git a/buffer.c b/buffer.c
+index 5d7b0af..7b2970d 100644
+--- a/buffer.c
++++ b/buffer.c
+@@ -333,6 +333,15 @@ struct buffer *findBufferByName(const char *name) {
+ 	return NULL;
+ }
+ 
++int bufferSetFilename(struct buffer *buf, const char *path) {
++	if (!pathNameAllowed(path))
++		return -1;
++	char *name = collapseHome(path);
++	free(buf->filename);
++	buf->filename = name;
++	return 0;
++}
++
+ struct buffer *findOrCreateSpecialBuffer(const char *name) {
+ 	struct buffer *buf = findBufferByName(name);
+ 	if (buf)
+diff --git a/buffer.h b/buffer.h
+index 1e5f9ed..a1ffd49 100644
+--- a/buffer.h
++++ b/buffer.h
+@@ -44,6 +44,12 @@ void nextBuffer(void);
+ void previousBuffer(void);
+ void killBuffer(void);
+ void computeDisplayNames(void);
++
++/* The only way a file path becomes a buffer's name.  If pathNameAllowed
++ * refuses the path, returns -1 and leaves the old name in place.
++ * Otherwise frees the old name, stores the collapsed path, returns 0.
++ * The path may be the buffer's current name. */
++int bufferSetFilename(struct buffer *buf, const char *path);
+ void clampToBuffer(struct buffer *buf, int *px, int *py);
+ void clampPositions(struct buffer *buf);
+ 
+diff --git a/completion.c b/completion.c
+index bb262fc..10cc72e 100644
+--- a/completion.c
++++ b/completion.c
+@@ -99,15 +99,6 @@ static char *findCommonPrefix(char **strings, int count) {
+ 	return prefix;
+ }
+ 
+-/* A name the minibuffer can hold as typed text: valid UTF-8 and no
+- * control characters.*/
+-static int nameInsertable(const char *name) {
+-	for (const unsigned char *q = (const unsigned char *)name; *q; q++)
+-		if (*q < 0x20 || *q == 0x7f)
+-			return 0;
+-	return utf8_validate((const uint8_t *)name, (int)strlen(name));
+-}
+-
+ enum scanKind { SCAN_ANY, SCAN_DIRS, SCAN_EXEC };
+ 
+ /* Add each entry of dir whose name extends base, as typed[0..tlen)
+@@ -127,7 +118,7 @@ static void scanDir(const char *dir, const char *typed, int tlen,
+ 		    (name[0] == '.' && base[0] != '.') ||
+ 		    strcmp(name, ".") == 0 ||
+ 		    (strcmp(name, "..") == 0 && strcmp(base, "..") != 0) ||
+-		    !nameInsertable(name))
++		    !pathNameAllowed(name))
+ 			continue;
+ 		size_t nlen = strlen(name);
+ 		char *path = xmalloc(dlen + nlen + 2);
+diff --git a/fileio.c b/fileio.c
+index 0003e88..6789384 100644
+--- a/fileio.c
++++ b/fileio.c
+@@ -436,6 +436,8 @@ static int editorOpenBody(struct buffer *bufr, const char *filename);
+ /* The wrapper exists so that relockIfDirty() cannot be bypassed:
+  * editorOpenBody opens and closes the file, which drops any lock this
+  * buffer held on that inode. */
++#define PATH_REFUSED "File name has a control byte or invalid UTF-8"
++
+ int editorOpen(struct buffer *bufr, const char *filename) {
+ 	int rc = editorOpenBody(bufr, filename);
+ 	relockIfDirty(bufr);
+@@ -443,8 +445,10 @@ int editorOpen(struct buffer *bufr, const char *filename) {
+ }
+ 
+ static int editorOpenBody(struct buffer *bufr, const char *filename) {
+-	free(bufr->filename);
+-	bufr->filename = collapseHome(filename);
++	if (bufferSetFilename(bufr, filename) != 0) {
++		setStatusMessage(PATH_REFUSED);
++		return -1;
++	}
+ 
+ 	/* Resolve to an OS-usable path for all I/O in this function */
+ 	char *iopath = expandTilde(bufr->filename);
+@@ -907,6 +911,14 @@ static void saveBuffer(int skip_backup, int confirmed) {
+ 			return;
+ 		}
+ 
++		/* Before asking, and before the buffer takes the name:
++		 * refusing leaves it as it was. */
++		if (!pathNameAllowed(input)) {
++			free(input);
++			setStatusMessage(PATH_REFUSED);
++			return;
++		}
++
+ 		/* Before the buffer takes the name: declining leaves it
+ 		 * as it was. */
+ 		if (!confirmOverwrite(input)) {
+@@ -916,8 +928,7 @@ static void saveBuffer(int skip_backup, int confirmed) {
+ 		}
+ 		confirmed = 1;
+ 
+-		free(E.buf->filename);
+-		E.buf->filename = collapseHome(input);
++		(void)bufferSetFilename(E.buf, input);
+ 		free(input);
+ 
+ 		E.buf->special_buffer = 0;
+@@ -1127,6 +1138,12 @@ void saveAs(void) {
+ 		return;
+ 	}
+ 
++	if (!pathNameAllowed(new_filename)) {
++		free(new_filename);
++		setStatusMessage(PATH_REFUSED);
++		return;
++	}
++
+ 	/* Before the rename, so declining leaves the buffer visiting
+ 	 * the file it was. */
+ 	if (!confirmOverwrite(new_filename)) {
+@@ -1135,8 +1152,7 @@ void saveAs(void) {
+ 		return;
+ 	}
+ 
+-	free(E.buf->filename);
+-	E.buf->filename = collapseHome(new_filename);
++	(void)bufferSetFilename(E.buf, new_filename);
+ 	free(new_filename);
+ 
+ 	/*
+@@ -1722,14 +1738,44 @@ void changeDirectory(void) {
+ 
+ 	/* If the directory actually changed, update relative filenames */
+ 	if (strcmp(old_cwd, new_cwd) != 0) {
++		/* All or nothing: a relative name can pick up bytes from
++		 * the old directory, so work out every new name first. */
++		int n = 0, refused = 0;
++		for (struct buffer *b = E.headbuf; b != NULL; b = b->next)
++			if (b->filename != NULL && !b->special_buffer)
++				n++;
++		char **names = xcalloc(n > 0 ? (size_t)n : 1, sizeof(*names));
++		int i = 0;
++		for (struct buffer *b = E.headbuf; b != NULL; b = b->next) {
++			if (b->filename == NULL || b->special_buffer)
++				continue;
++			names[i] = rebaseFilename(b->filename, old_cwd, new_cwd);
++			if (!pathNameAllowed(names[i]))
++				refused = 1;
++			i++;
++		}
++		if (refused) {
++			for (i = 0; i < n; i++)
++				free(names[i]);
++			free(names);
++			if (chdir(old_cwd) != 0)
++				setStatusMessage("cd: refused, and can't return: %s",
++						 strerror(errno));
++			else
++				setStatusMessage("cd: refused: a buffer's name would "
++						 "have a control byte or invalid UTF-8");
++			free(dir);
++			return;
++		}
++		i = 0;
+ 		for (struct buffer *b = E.headbuf; b != NULL; b = b->next) {
+ 			if (b->filename == NULL || b->special_buffer)
+ 				continue;
+-			char *new_name =
+-				rebaseFilename(b->filename, old_cwd, new_cwd);
+-			free(b->filename);
+-			b->filename = new_name;
++			(void)bufferSetFilename(b, names[i]);
++			free(names[i]);
++			i++;
+ 		}
++		free(names);
+ 
+ 		computeDisplayNames();
+ 	}
+diff --git a/tests/test_fileio.c b/tests/test_fileio.c
+index 3f4269e..91ae3bd 100644
+--- a/tests/test_fileio.c
++++ b/tests/test_fileio.c
+@@ -6,6 +6,8 @@
+ #include "fileio.h"
+ #include "util.h"
+ #include "buffer.h"
++#include "unicode.h"
++#include <limits.h>
+ #include <stdio.h>
+ #include <string.h>
+ #include <unistd.h>
+@@ -502,6 +504,193 @@ void test_first_save_of_unnamed_buffer_over_existing_file_asks(void) {
+ 	owTeardown();
+ }
+ 
++/* ---- the file path rule ---- */
++
++void test_path_rule(void) {
++	TEST_ASSERT_TRUE(pathNameAllowed("plain.c"));
++	TEST_ASSERT_TRUE(pathNameAllowed("dir/\xe6\x97\xa5\xe6\x9c\xac.txt"));
++	TEST_ASSERT_TRUE(pathNameAllowed("sp ace"));
++	/* Encoded C1 is valid UTF-8 and not C0: the rule allows it. */
++	TEST_ASSERT_TRUE(pathNameAllowed("c1\xc2\x85"));
++	TEST_ASSERT_FALSE(pathNameAllowed("a\nb"));
++	TEST_ASSERT_FALSE(pathNameAllowed("a\tb"));
++	TEST_ASSERT_FALSE(pathNameAllowed("a\x01"));
++	TEST_ASSERT_FALSE(pathNameAllowed("a\x1f"));
++	TEST_ASSERT_FALSE(pathNameAllowed("a\x7f"));
++	TEST_ASSERT_FALSE(pathNameAllowed("a\xff"));
++	TEST_ASSERT_FALSE(pathNameAllowed("a\xc3"));
++}
++
++void test_set_filename_refused_keeps_old_name(void) {
++	struct buffer *buf = make_test_buffer("x");
++	TEST_ASSERT_EQUAL_INT(0, bufferSetFilename(buf, "old"));
++	TEST_ASSERT_EQUAL_INT(-1, bufferSetFilename(buf, "a\nb"));
++	TEST_ASSERT_EQUAL_STRING("old", buf->filename);
++	/* Its own name, freed only after the copy. */
++	TEST_ASSERT_EQUAL_INT(0, bufferSetFilename(buf, buf->filename));
++	TEST_ASSERT_EQUAL_STRING("old", buf->filename);
++}
++
++/* Caller 1: editorOpen, and so every route that opens a file. */
++void test_open_refuses_bad_path_that_exists(void) {
++	owSetup();
++	const char *bad[] = { "x\ty", "x\ny", "x\x7fy", "x\xffy" };
++	struct buffer *buf = make_test_buffer(NULL);
++	for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
++		char p[128];
++		owWrite(bad[i], "theirs\n");
++		owPath(p, sizeof(p), bad[i]);
++		TEST_ASSERT_EQUAL_INT(-1, editorOpen(buf, p));
++		TEST_ASSERT_NULL(buf->filename);
++		TEST_ASSERT_NULL(switchToFile(p));
++		TEST_ASSERT_EQUAL_STRING("theirs\n", owRead(bad[i]));
++		unlink(p);
++	}
++	owTeardown();
++}
++
++/* The keys for typing the path of x<TAB>y, then RET, then y.  The y
++ * would answer an overwrite prompt; if none is asked it stays unread. */
++static void owRunBadName(void (*fn)(void)) {
++	char p[128];
++	owPath(p, sizeof(p), "x");
++	int keys[64];
++	int n = 0;
++	for (const char *q = p; *q && n < 56; q++)
++		keys[n++] = (unsigned char)*q;
++	keys[n++] = CTRL('q');
++	keys[n++] = '\t';
++	keys[n++] = 'y';
++	keys[n++] = '\r';
++	keys[n++] = 'y';
++	scriptKeys(keys, n);
++	muteStdout();
++	fn();
++	unmuteStdout();
++}
++
++/* Caller 2: the first save.  Refused before the overwrite prompt, with
++ * the name, the buffer's state and the file on disk as they were. */
++void test_first_save_refuses_bad_path_without_asking(void) {
++	owSetup();
++	char p[128];
++	owWrite("x\ty", "precious\n");
++	owPath(p, sizeof(p), "x\ty");
++	struct buffer *buf = make_test_buffer("mine");
++	buf->dirty = 1;
++
++	owRunBadName(doSave);
++
++	TEST_ASSERT_EQUAL_INT(test_key_count - 1, test_key_pos);
++	clearKeys();
++	TEST_ASSERT_NULL(buf->filename);
++	TEST_ASSERT_TRUE(buf->dirty);
++	TEST_ASSERT_EQUAL_STRING("precious\n", owRead("x\ty"));
++	unlink(p);
++	owTeardown();
++}
++
++/* And on a special buffer, which also asks for a name. */
++void test_first_save_of_special_buffer_stays_special_on_refusal(void) {
++	owSetup();
++	struct buffer *buf = make_test_buffer("mine");
++	buf->filename = xstrdup("*scratch*");
++	buf->special_buffer = 1;
++
++	owRunBadName(doSave);
++	clearKeys();
++
++	TEST_ASSERT_EQUAL_STRING("*scratch*", buf->filename);
++	TEST_ASSERT_TRUE(buf->special_buffer);
++	owTeardown();
++}
++
++/* Caller 3: C-x C-w. */
++void test_save_as_refuses_bad_path_without_asking(void) {
++	owSetup();
++	char p[128], a_path[128];
++	owWrite("x\ty", "precious\n");
++	owPath(p, sizeof(p), "x\ty");
++	owPath(a_path, sizeof(a_path), "a");
++	struct buffer *buf = owVisitA();
++
++	owRunBadName(doSaveAs);
++
++	TEST_ASSERT_EQUAL_INT(test_key_count - 1, test_key_pos);
++	clearKeys();
++	TEST_ASSERT_EQUAL_STRING(a_path, buf->filename);
++	TEST_ASSERT_EQUAL_STRING("mine\n", owRead("a"));
++	TEST_ASSERT_EQUAL_STRING("precious\n", owRead("x\ty"));
++	unlink(p);
++	owTeardown();
++}
++
++/* Caller 4: cd.  A relative name picks up the old directory's bytes. */
++static void runCd(const char *dir) {
++	int keys[64];
++	int n = 0;
++	for (const char *q = dir; *q && n < 60; q++)
++		keys[n++] = (unsigned char)*q;
++	keys[n++] = '\r';
++	scriptKeys(keys, n);
++	muteStdout();
++	changeDirectory();
++	unmuteStdout();
++	clearKeys();
++}
++
++void test_cd_refused_if_a_rebased_name_would_fail(void) {
++	char start[PATH_MAX], before[PATH_MAX], after[PATH_MAX];
++	TEST_ASSERT_NOT_NULL(getcwd(start, sizeof(start)));
++	owSetup();
++	char bad[128];
++	owPath(bad, sizeof(bad), "d\ty");
++	TEST_ASSERT_EQUAL_INT(0, mkdir(bad, 0700));
++	TEST_ASSERT_EQUAL_INT(0, chdir(bad));
++	TEST_ASSERT_NOT_NULL(getcwd(before, sizeof(before)));
++
++	struct buffer *good = make_test_buffer("x");
++	TEST_ASSERT_EQUAL_INT(0, bufferSetFilename(good, "/abs/name"));
++	struct buffer *rel = newBuffer();
++	TEST_ASSERT_EQUAL_INT(0, bufferSetFilename(rel, "f"));
++	rel->next = good;
++	E.headbuf = rel;
++
++	runCd("/");
++
++	TEST_ASSERT_NOT_NULL(getcwd(after, sizeof(after)));
++	TEST_ASSERT_EQUAL_STRING(before, after);
++	TEST_ASSERT_EQUAL_STRING("f", rel->filename);
++	TEST_ASSERT_EQUAL_STRING("/abs/name", good->filename);
++
++	E.headbuf = good;
++	destroyBuffer(rel);
++	TEST_ASSERT_EQUAL_INT(0, chdir(start));
++	rmdir(bad);
++	owTeardown();
++}
++
++/* Valid names still rebase, through the setter. */
++void test_cd_still_rebases_valid_names(void) {
++	char start[PATH_MAX], want[PATH_MAX];
++	TEST_ASSERT_NOT_NULL(getcwd(start, sizeof(start)));
++	owSetup();
++	char sub[128];
++	owPath(sub, sizeof(sub), "sub");
++	TEST_ASSERT_EQUAL_INT(0, mkdir(sub, 0700));
++	TEST_ASSERT_EQUAL_INT(0, chdir(sub));
++	struct buffer *buf = make_test_buffer("x");
++	TEST_ASSERT_EQUAL_INT(0, bufferSetFilename(buf, "f"));
++
++	runCd("..");
++
++	snprintf(want, sizeof(want), "sub/f");
++	TEST_ASSERT_EQUAL_STRING(want, buf->filename);
++	TEST_ASSERT_EQUAL_INT(0, chdir(start));
++	rmdir(sub);
++	owTeardown();
++}
++
+ /* Opened as "(New file)"; something else creates the file meanwhile. */
+ void test_new_file_created_meanwhile_is_not_overwritten_silently(void) {
+ 	owSetup();
+@@ -839,6 +1028,14 @@ int main(void) {
+ 	RUN_TEST(test_save_as_over_existing_file_accepted_writes);
+ 	RUN_TEST(test_save_as_to_a_new_name_does_not_ask);
+ 	RUN_TEST(test_first_save_of_unnamed_buffer_over_existing_file_asks);
++	RUN_TEST(test_path_rule);
++	RUN_TEST(test_set_filename_refused_keeps_old_name);
++	RUN_TEST(test_open_refuses_bad_path_that_exists);
++	RUN_TEST(test_first_save_refuses_bad_path_without_asking);
++	RUN_TEST(test_first_save_of_special_buffer_stays_special_on_refusal);
++	RUN_TEST(test_save_as_refuses_bad_path_without_asking);
++	RUN_TEST(test_cd_refused_if_a_rebased_name_would_fail);
++	RUN_TEST(test_cd_still_rebases_valid_names);
+ 	RUN_TEST(test_new_file_created_meanwhile_is_not_overwritten_silently);
+ 
+ 	RUN_TEST(test_load_keeps_existing_final_newline);
+diff --git a/unicode.c b/unicode.c
+index 94f8887..9825027 100644
+--- a/unicode.c
++++ b/unicode.c
+@@ -9,6 +9,7 @@
+ #include <stdio.h>
+ #include <stdint.h>
+ #include <stddef.h>
++#include <string.h>
+ #include <wchar.h>
+ #include <locale.h>
+ #include "unicode.h"
+@@ -514,6 +515,13 @@ int utf8_validate(const uint8_t *buf, int len) {
+ 	return 1;
+ }
+ 
++int pathNameAllowed(const char *path) {
++	for (const unsigned char *q = (const unsigned char *)path; *q; q++)
++		if (*q < 0x20 || *q == 0x7f)
++			return 0;
++	return utf8_validate((const uint8_t *)path, (int)strlen(path));
++}
++
+ size_t utf8SanitizeLine(const uint8_t *in, size_t len, char *out,
+ 			size_t outsz) {
+ 	static const char replacement[] = "\xEF\xBF\xBD"; /* U+FFFD */
+diff --git a/unicode.h b/unicode.h
+index 16fe657..f8360a1 100644
+--- a/unicode.h
++++ b/unicode.h
+@@ -45,6 +45,9 @@ int isIndicSentenceTerminator(uint32_t cp);
+ 
+ int utf8_validate(const uint8_t *buf, int len);
+ 
++/* The rule for a file path: valid UTF-8, with no C0 control byte or DEL. */
++int pathNameAllowed(const char *path);
++
+ /* Copy untrusted bytes into out as one line safe to draw raw: C0 and
+  * DEL as ^X, C1 as '?', invalid bytes as U+FFFD.  out is NUL-terminated
+  * and never ends mid-character.  Returns the bytes of in consumed. */

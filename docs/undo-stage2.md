@@ -205,3 +205,36 @@ In all 1,521, the invalid row was present before any key.
 - Incomplete 23 to 28: 5 more suites with changed tests "did not run against the old code", so `newtests` says nothing for 10 suites.
 - 31 seeds in 17 groups are still not minimised. The earlier attribution of the 257 wasn't repeated; they kept their groups.
 - Still no test or fuzz run reaches a few defensive lines, including `undo.c:360` (`UNDO_MISMATCH`).
+
+## Filename rule (owner request, separate from the 15)
+
+`patches/filename-rule/`, one patch, `9d6a32d` on `18d417c`. The 15 apply without it. Nothing here changes the proofs or the model.
+
+**Rule:** a path must be valid UTF-8 with no C0 control byte or DEL. `pathNameAllowed` states it (`completion.c`'s `nameInsertable` is gone, as it was the same test). `bufferSetFilename` is how a path becomes a buffer's name, with four callers: `editorOpenBody`, `saveBuffer`, `saveAs` and `changeDirectory`. Saves check before `confirmOverwrite`, and the setter computes the new name before freeing the old. `cd` works out every rebased name first and refuses, returning to the old directory, if any fails.
+
+**Size:** 83 lines added and 20 removed in source, against my estimate of 30 to 40 changed; `cd` is most of the difference. 197 test lines, against 60 to 100. The display fixes stay.
+
+**Every route, driven through a real editor with a bad path (`tests/undo/path_routes.py`), against `18d417c`:**
+
+| Route | `18d417c` | With the rule |
+|---|---|---|
+| Command line, `x\ty` or `qq\xFFy` | Opens, holds the name | **emil exits 1** with the message, as for other files it can't open |
+| `C-x C-f`, typed | Opens | Refused, message, stays in the buffer |
+| `C-x C-f`, glob | Opens | Refused, message |
+| `C-x C-f`, a bad name hard-linked to an open file | Switches, "are the same file" | **Same.** Stores no name, so the rule doesn't apply. The message shows the path |
+| `M-.`, tag path | Opens | No name stored. I didn't see the message on screen |
+| Tag jump back | Not driven | A bad name can't be on the stack now, as it never became a buffer |
+| Header/source toggle | Not driven | Derived from the current name. Goes through `editorOpen` |
+| Revert | Not driven | Existing name. Goes through `editorOpen` |
+| First save | Overwrites after `y` | Refused before the prompt, file unchanged |
+| `C-x C-w` | Overwrites after `y` | Refused before the prompt, file unchanged |
+| `cd` when a rebased name would fail | Takes the bad name | Refused, stays in the directory |
+| `cd`, valid names | Works | Works |
+| Special buffers | Fixed strings | Unchanged, not through the setter |
+
+**Tests:** 8 new in `test_fileio`, covering all four callers. Disabling each caller's check in turn makes `make test` fail, three on the named test and the first-save one by a crash in the `fileio` suite. **Reruns:** `make test` and sanitizers pass, no build warnings. Key fuzz, 3,000 seeds: seed 1127 only, 0 refusals, 0 row logs; 1,506 UTF-8 warnings from the added lines. Differential and refcheck weren't run on this patch.
+
+**Assumption 5 and the README sentence:** the minibuffer path is closed, as the bad name can't become a buffer. `*Tags*` is still open. A directory holding a bad byte can still be the working directory; only names are checked.
+
+**`*Tags*`, not done:** sanitise the scope, file and pattern fields in `menuRow`. About 12 to 18 source lines and 30 to 40 test lines, by estimate.
+
