@@ -1022,3 +1022,118 @@
                             (b (insert-data tx sx sy (append d1 d2))))
                  (:instance offset-le-flat (x sx) (y sy)))
            :in-theory (disable offset-le-flat))))
+
+;; ---------- The forms the history proofs use ----------
+
+(defthm text-p-split-lines (text-p (split-lines d))
+  :hints (("Goal" :use clean-split-lines :in-theory (e/d (clean-p) (clean-split-lines)))))
+
+(defthm typing-merge-text
+  (implies (and (clean-p tx) (valid-delete-p tx px py ex ey) (true-listp d2))
+           (equal (insert-data tx ex ey d2)
+                  (insert-data (delete-text tx px py ex ey) px py
+                               (append (region-text tx px py ex ey) d2))))
+  :hints (("Goal" :do-not-induct t
+           :use ((:instance insert-at-end-merges
+                            (tx (delete-text tx px py ex ey)) (sx px) (sy py)
+                            (d1 (region-text tx px py ex ey))))
+           :in-theory (disable insert-at-end-merges region-text)))
+  :rule-classes nil)
+
+(defthm delete-front-merge-text
+  (implies (and (clean-p tx) (valid-delete-p tx sx sy ex ey) (true-listp d1))
+           (equal (insert-data (delete-text tx sx sy ex ey) sx sy
+                               (append d1 (region-text tx sx sy ex ey)))
+                  (insert-data tx sx sy d1)))
+  :hints (("Goal" :do-not-induct t
+           :use ((:instance insert-at-start-merges
+                            (tx (delete-text tx sx sy ex ey))
+                            (d2 (region-text tx sx sy ex ey))))
+           :in-theory (disable insert-at-start-merges region-text))))
+
+(defthm delete-back-merge-text
+  (implies (and (clean-p tx) (valid-delete-p tx sx sy ex ey) (true-listp d1))
+           (equal (insert-data (delete-text tx sx sy ex ey) sx sy
+                               (append (region-text tx sx sy ex ey) d1))
+                  (insert-data tx ex ey d1)))
+  :hints (("Goal" :do-not-induct t
+           :use ((:instance insert-at-end-merges
+                            (tx (delete-text tx sx sy ex ey))
+                            (d1 (region-text tx sx sy ex ey)) (d2 d1)))
+           :in-theory (disable insert-at-end-merges region-text))))
+
+;; Appending rows is an insert of newlines at the end of the text.
+(defthm nth-last-row
+  (implies (consp tx)
+           (equal (nth (+ -1 (len tx)) tx) (car (last tx))))
+  :hints (("Goal" :in-theory (enable nth))))
+
+(defthm valid-end-of-text
+  (implies (consp tx)
+           (valid-pos-p (len (car (last tx))) (+ -1 (len tx)) tx))
+  :hints (("Goal" :in-theory (enable valid-pos-p))))
+
+(local (defthm flat-empty-rows
+  (implies (not (zp n))
+           (equal (flat (empty-rows n)) (nl-list (- n 1))))
+  :hints (("Goal" :in-theory (enable flat)))))
+
+(local (defthm rows-empty
+  (and (lines-p (empty-rows n)) (no-newline-rows-p (empty-rows n)))))
+
+(local (defthm clean-append-rows
+  (implies (clean-p tx) (clean-p (append tx (empty-rows n))))
+  :hints (("Goal" :in-theory (enable clean-p) :do-not-induct t))))
+
+(local (defthm offset-end-of-text
+  (implies (text-p tx)
+           (equal (offset (len (car (last tx))) (+ -1 (len tx)) tx) (len (flat tx))))
+  :hints (("Goal" :in-theory (enable offset-is flat rows-before) :induct (flat tx)))))
+
+(local (defthm consp-empty-rows
+  (implies (not (zp n)) (consp (empty-rows n)))))
+
+(local (defthm flat-append-rows
+  (implies (and (consp tx) (not (zp n)))
+           (equal (flat (append tx (empty-rows n)))
+                  (append (flat tx) (nl-list n))))
+  :hints (("Goal" :do-not-induct t
+           :use ((:instance flat-append (a tx) (b (empty-rows n)))
+                 (:instance consp-empty-rows))
+           :expand ((nl-list n))
+           :in-theory (disable flat-append empty-rows consp-empty-rows)))))
+
+(local (defthm nthcdr-len-true
+  (implies (true-listp f) (equal (nthcdr (len f) f) nil))))
+(local (defthm take-len-true
+  (implies (true-listp f) (equal (take (len f) f) f))))
+
+(defthm extend-is-insert
+  (implies (and (clean-p tx) (not (zp n)))
+           (equal (append tx (empty-rows n))
+                  (insert-data tx (len (car (last tx))) (+ -1 (len tx)) (nl-list n))))
+  :hints (("Goal" :do-not-induct t
+           :use ((:instance flat-injective
+                            (a (append tx (empty-rows n)))
+                            (b (insert-data tx (len (car (last tx))) (+ -1 (len tx)) (nl-list n))))
+                 (:instance valid-end-of-text))
+           :in-theory (disable valid-end-of-text)))
+  :rule-classes nil)
+
+(local (defthm nl-list-true (true-listp (nl-list n))))
+(local (defthm split-nl-list
+  (equal (split-lines (nl-list n)) (cons nil (empty-rows n)))
+  :hints (("Goal" :in-theory (enable split-lines)))))
+(local (defthm last-empty-rows
+  (equal (car (last (cons nil (empty-rows n)))) nil)))
+(local (defthm last-empty-rows-2
+  (not (car (last (empty-rows n))))))
+(local (defthm len-empty-rows
+  (equal (len (empty-rows n)) (nfix n))))
+
+(defthm extend-data-end
+  (implies (not (zp n))
+           (and (equal (data-end-x x (nl-list n)) 0)
+                (equal (data-end-y y (nl-list n)) (+ y n))))
+  :hints (("Goal" :in-theory (enable data-end-x data-end-y insert-end-x insert-end-y)
+           :expand ((empty-rows n)))))
