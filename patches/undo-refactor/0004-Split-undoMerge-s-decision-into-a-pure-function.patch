@@ -1,0 +1,231 @@
+From da381960e2c7e618869b7c6937311f9f73f3f8ba Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 07:40:08 +1100
+Subject: [PATCH 4/7] Split undoMerge's decision into a pure function
+
+undoMergeDecision only reads its arguments and is tested directly.  The
+data handling stays in a static apply step.  No behaviour change.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ tests/test_coalesce.c | 69 +++++++++++++++++++++++++++++++++++++++++++
+ undo.c                | 69 +++++++++++++++++++++++--------------------
+ undo.h                | 11 +++++++
+ 3 files changed, 117 insertions(+), 32 deletions(-)
+
+diff --git a/tests/test_coalesce.c b/tests/test_coalesce.c
+index 61f10d8..049607f 100644
+--- a/tests/test_coalesce.c
++++ b/tests/test_coalesce.c
+@@ -595,9 +595,78 @@ void test_burst_run_undoes_whole(void) {
+ 	TEST_ASSERT_EQUAL_STRING("keep", (char *)buf->row[0].chars);
+ }
+ 
++/* ---- The merge decision, on its own ---- */
++
++static struct undo decision_rec(int sx, int sy, int ex, int ey, int del) {
++	struct undo u;
++	memset(&u, 0, sizeof u);
++	u.startx = sx;
++	u.starty = sy;
++	u.endx = ex;
++	u.endy = ey;
++	u.delete = del;
++	u.append = 1;
++	u.datalen = 1;
++	return u;
++}
++
++void test_merge_decision_shapes(void) {
++	struct undo typed = decision_rec(0, 0, 3, 0, 0);
++	struct undo next = decision_rec(3, 0, 4, 0, 0);
++	struct undo apart = decision_rec(9, 0, 10, 0, 0);
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_APPEND, undoMergeDecision(&typed, &next));
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_NONE, undoMergeDecision(&typed, &apart));
++
++	struct undo deleted = decision_rec(5, 0, 6, 0, 1);
++	struct undo cd = decision_rec(5, 0, 6, 0, 1);
++	struct undo bs = decision_rec(4, 0, 5, 0, 1);
++	struct undo elsewhere = decision_rec(0, 0, 1, 0, 1);
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_APPEND, undoMergeDecision(&deleted, &cd));
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_PREPEND, undoMergeDecision(&deleted, &bs));
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_NONE, undoMergeDecision(&deleted, &elsewhere));
++}
++
++void test_merge_decision_rejections(void) {
++	struct undo prev = decision_rec(0, 0, 3, 0, 0);
++	struct undo next = decision_rec(3, 0, 4, 0, 0);
++	struct undo del = decision_rec(3, 0, 4, 0, 1);
++
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_NONE, undoMergeDecision(NULL, &next));
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_NONE, undoMergeDecision(&prev, &del));
++
++	prev.append = 0;
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_NONE, undoMergeDecision(&prev, &next));
++	prev.append = 1;
++
++	prev.paired = 1;
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_NONE, undoMergeDecision(&prev, &next));
++	prev.paired = 0;
++
++	next.paired = 1;
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_NONE, undoMergeDecision(&prev, &next));
++	next.paired = 0;
++
++	next.datalen = 0;
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_NONE, undoMergeDecision(&prev, &next));
++	next.datalen = 1;
++
++	prev.nmerges = 19;
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_APPEND, undoMergeDecision(&prev, &next));
++	prev.nmerges = 20;
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_NONE, undoMergeDecision(&prev, &next));
++	next.uncapped = 1;
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_APPEND, undoMergeDecision(&prev, &next));
++	next.uncapped = 0;
++	prev.uncapped = 1;
++	TEST_ASSERT_EQUAL_INT(UNDO_MERGE_APPEND, undoMergeDecision(&prev, &next));
++}
++
+ int main(void) {
+ 	TEST_BEGIN();
+ 
++	RUN_TEST(test_merge_decision_shapes);
++	RUN_TEST(test_merge_decision_rejections);
++
+ 	RUN_TEST(test_typing_a_word_is_one_record);
+ 	RUN_TEST(test_typing_at_end_of_buffer_costs_one_record);
+ 	RUN_TEST(test_backspace_run_is_one_record);
+diff --git a/undo.c b/undo.c
+index cf7ba2a..6902d9b 100644
+--- a/undo.c
++++ b/undo.c
+@@ -416,12 +416,7 @@ static void undoEnsureData(struct undo *u, int needed) {
+ 	u->datasize = newsize;
+ }
+ 
+-/* Try to fold 'new' into 'prev', which must be the head of the undo
+- * list.  Returns 1 if merged ('new' is then spent and must be freed by
+- * the caller), 0 if the records cannot be joined.
+- *
+- * Invariant:
+- *     end == computeInsertEnd(data, start)
++/* Would 'new' fold into 'prev', and at which end?  Pure.
+  *
+  * Only these three shapes join:
+  *
+@@ -429,37 +424,44 @@ static void undoEnsureData(struct undo *u, int needed) {
+  *   C-d        prev.start == new.start   append,  start unchanged
+  *   backspace  prev.start == new.end     prepend, start := new.start
+  */
+-static int undoMerge(struct undo *prev, struct undo *new) {
++enum undoMergeShape undoMergeDecision(const struct undo *prev,
++				      const struct undo *new) {
+ 	if (prev == NULL || new == NULL)
+-		return 0;
++		return UNDO_MERGE_NONE;
+ 	if (!prev->append)
+-		return 0;
++		return UNDO_MERGE_NONE;
+ 	if (prev->delete != new->delete)
+-		return 0;
++		return UNDO_MERGE_NONE;
+ 	if (prev->paired || new->paired)
+-		return 0;
++		return UNDO_MERGE_NONE;
+ 	if (!prev->uncapped && !new->uncapped &&
+ 	    prev->nmerges >= UNDO_MERGE_LIMIT)
+-		return 0;
++		return UNDO_MERGE_NONE;
+ 	if (new->datalen <= 0)
+-		return 0;
++		return UNDO_MERGE_NONE;
+ 	if (prev->datalen > INT_MAX / 2 || new->datalen > INT_MAX / 2)
+-		return 0;
+-
+-	int prepend = 0;
+-	if (!new->delete) {
+-		if (!ALIGNED(prev->endx, prev->endy, new->startx, new->starty))
+-			return 0;
+-	} else if (ALIGNED(prev->startx, prev->starty, new->startx,
+-			   new->starty)) {
+-	} else if (ALIGNED(prev->startx, prev->starty, new->endx, new->endy)) {
+-		prepend = 1;
+-	} else {
+-		return 0;
+-	}
++		return UNDO_MERGE_NONE;
++
++	if (!new->delete)
++		return ALIGNED(prev->endx, prev->endy, new->startx, new->starty) ?
++			       UNDO_MERGE_APPEND :
++			       UNDO_MERGE_NONE;
++	if (ALIGNED(prev->startx, prev->starty, new->startx, new->starty))
++		return UNDO_MERGE_APPEND;
++	if (ALIGNED(prev->startx, prev->starty, new->endx, new->endy))
++		return UNDO_MERGE_PREPEND;
++	return UNDO_MERGE_NONE;
++}
+ 
++/* Fold 'new' into 'prev', the head of the undo list, as decided above.
++ *
++ * Invariant:
++ *     end == computeInsertEnd(data, start)
++ */
++static void undoMergeApply(struct undo *prev, const struct undo *new,
++			   enum undoMergeShape shape) {
+ 	undoEnsureData(prev, prev->datalen + new->datalen);
+-	if (prepend) {
++	if (shape == UNDO_MERGE_PREPEND) {
+ 		memmove(&prev->data[new->datalen], prev->data, prev->datalen);
+ 		memcpy(prev->data, new->data, new->datalen);
+ 		prev->startx = new->startx;
+@@ -474,17 +476,20 @@ static int undoMerge(struct undo *prev, struct undo *new) {
+ 
+ 	computeInsertEnd(prev->data, prev->datalen, prev->startx, prev->starty,
+ 			 &prev->endx, &prev->endy);
+-	return 1;
+ }
+ 
+ static void freeUndos(struct undo *first);
+ 
+ /* Add a record to the undo list, taking ownership.*/
+ void pushUndo(struct buffer *buf, struct undo *new) {
+-	if (new->append && undoMerge(buf->undo, new)) {
+-		new->prev = NULL;
+-		freeUndos(new);
+-		return;
++	if (new->append) {
++		enum undoMergeShape shape = undoMergeDecision(buf->undo, new);
++		if (shape != UNDO_MERGE_NONE) {
++			undoMergeApply(buf->undo, new, shape);
++			new->prev = NULL;
++			freeUndos(new);
++			return;
++		}
+ 	}
+ 	if (buf->undo != NULL)
+ 		buf->undo->append = 0;
+diff --git a/undo.h b/undo.h
+index 60f4f8a..01f97e9 100644
+--- a/undo.h
++++ b/undo.h
+@@ -24,6 +24,17 @@ enum undoResult doRedo(struct buffer *buf, int count);
+ struct undo *newUndo(void);
+ void undoReplaceData(struct undo *u, int newsize);
+ 
++enum undoMergeShape {
++	UNDO_MERGE_NONE,
++	UNDO_MERGE_APPEND,  /* new's data goes after prev's */
++	UNDO_MERGE_PREPEND, /* new's data goes before prev's */
++};
++
++/* Would 'new' fold into 'prev', the head of the undo list?  Changes
++ * nothing.  pushUndo calls this only for a record with 'append' set. */
++enum undoMergeShape undoMergeDecision(const struct undo *prev,
++				      const struct undo *new);
++
+ /* Add a record to the undo list, taking ownership.  If the record has
+  * 'append' set it may be folded into the run at the head of the list,
+  * in which case it is freed.  Otherwise it closes that run and becomes

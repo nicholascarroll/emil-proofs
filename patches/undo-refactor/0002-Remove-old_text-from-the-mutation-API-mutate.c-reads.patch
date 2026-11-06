@@ -1,0 +1,453 @@
+From 9876c0572d934df180d0f478827c2a52a72fffd3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 07:34:03 +1100
+Subject: [PATCH 2/7] Remove old_text from the mutation API: mutate.c reads it
+ from the buffer
+
+No caller needs to supply it.  Over make test and 4,000 key-fuzz seeds, every
+valid range's old_text equalled what collectRegionText gives; the only
+differences were at invalid ranges, where the supplied text was wrong.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ edit.c            | 40 +++++++++-------------------------
+ mutate.c          | 55 +++++++++++++++++++++++++----------------------
+ mutate.h          | 13 ++++++-----
+ region.c          | 48 ++++++++++++++---------------------------
+ tests/test_undo.c |  2 +-
+ 5 files changed, 62 insertions(+), 96 deletions(-)
+
+diff --git a/edit.c b/edit.c
+index a6f62e3..97214a2 100644
+--- a/edit.c
++++ b/edit.c
+@@ -160,13 +160,7 @@ void unindent(int rept) {
+ 	if (trunc == 0)
+ 		return;
+ 
+-	/* Build old_text for mutateDelete */
+-	uint8_t *old_text = xmalloc(trunc + 1);
+-	memset(old_text, '\t', trunc);
+-	old_text[trunc] = 0;
+-
+-	mutateDelete(E.buf, 0, E.buf->cy, trunc, E.buf->cy, old_text, trunc);
+-	free(old_text);
++	mutateDelete(E.buf, 0, E.buf->cy, trunc, E.buf->cy);
+ 
+ 	/* If the cursor sat inside the removed indentation (cx < trunc),
+ 	 * the unconditional subtraction drove cx negative, and any
+@@ -194,9 +188,8 @@ void delChar(int count) {
+ 		if (E.buf->cx == row->size) {
+ 			/* Deleting the row separator joins the next row
+ 			 * onto this one. */
+-			const uint8_t nl = '\n';
+ 			mutateDeleteChar(E.buf, E.buf->cx, E.buf->cy, 0,
+-					 E.buf->cy + 1, &nl, 1);
++					 E.buf->cy + 1);
+ 		} else {
+ 			/* A truncated sequence at the end of the row is only
+ 			 * as long as what's left of the row. */
+@@ -204,8 +197,7 @@ void delChar(int count) {
+ 			if (n > row->size - E.buf->cx)
+ 				n = row->size - E.buf->cx;
+ 			mutateDeleteChar(E.buf, E.buf->cx, E.buf->cy,
+-					 E.buf->cx + n, E.buf->cy,
+-					 &row->chars[E.buf->cx], n);
++					 E.buf->cx + n, E.buf->cy);
+ 		}
+ 	}
+ }
+@@ -241,17 +233,15 @@ void backSpace(int count) {
+ 			do {
+ 				from--;
+ 			} while (from > 0 && utf8_isCont(row->chars[from]));
+-			mutateDeleteChar(E.buf, from, E.buf->cy, to, E.buf->cy,
+-					 &row->chars[from], to - from);
++			mutateDeleteChar(E.buf, from, E.buf->cy, to,
++					 E.buf->cy);
+ 			E.buf->cx = from;
+ 		} else {
+ 			/* Joining onto the previous row deletes the
+ 			 * separator between them. */
+-			const uint8_t nl = '\n';
+ 			int prevy = E.buf->cy - 1;
+ 			int prevx = E.buf->row[prevy].size;
+-			mutateDeleteChar(E.buf, prevx, prevy, 0, E.buf->cy, &nl,
+-					 1);
++			mutateDeleteChar(E.buf, prevx, prevy, 0, E.buf->cy);
+ 			E.buf->cx = prevx;
+ 			E.buf->cy = prevy;
+ 		}
+@@ -702,10 +692,6 @@ static void transposeSentencesBackward(void) {
+ 	uint8_t *b_text = collectRegionText(E.buf, a_end_x, a_end_y, b_end_x,
+ 					    b_end_y, &b_len);
+ 
+-	int old_len;
+-	uint8_t *old_text = collectRegionText(E.buf, a_start_x, a_start_y,
+-					      b_end_x, b_end_y, &old_len);
+-
+ 	/* Build replacement: B + A */
+ 	int repl_len = b_len + a_len;
+ 	uint8_t *repl = xmalloc(repl_len + 1);
+@@ -714,8 +700,8 @@ static void transposeSentencesBackward(void) {
+ 	repl[repl_len] = 0;
+ 
+ 	int ex, ey;
+-	mutateReplace(E.buf, a_start_x, a_start_y, b_end_x, b_end_y, old_text,
+-		      old_len, repl, repl_len, 0, &ex, &ey);
++	mutateReplace(E.buf, a_start_x, a_start_y, b_end_x, b_end_y, repl,
++		      repl_len, 0, &ex, &ey);
+ 
+ 	/* Point after the dragged sentence, now first in the region. */
+ 	E.buf->cx = a_start_x;
+@@ -724,7 +710,6 @@ static void transposeSentencesBackward(void) {
+ 
+ 	free(a_text);
+ 	free(b_text);
+-	free(old_text);
+ 	free(repl);
+ }
+ 
+@@ -788,10 +773,6 @@ void transposeSentences(int uarg) {
+ 					    b_end_y, &b_len);
+ 
+ 	/* Collect old text for entire range */
+-	int old_len;
+-	uint8_t *old_text = collectRegionText(E.buf, a_start_x, a_start_y,
+-					      b_end_x, b_end_y, &old_len);
+-
+ 	/* Build replacement: B + A */
+ 	int repl_len = b_len + a_len;
+ 	uint8_t *repl = xmalloc(repl_len + 1);
+@@ -800,15 +781,14 @@ void transposeSentences(int uarg) {
+ 	repl[repl_len] = 0;
+ 
+ 	int ex, ey;
+-	mutateReplace(E.buf, a_start_x, a_start_y, b_end_x, b_end_y, old_text,
+-		      old_len, repl, repl_len, 0, &ex, &ey);
++	mutateReplace(E.buf, a_start_x, a_start_y, b_end_x, b_end_y, repl,
++		      repl_len, 0, &ex, &ey);
+ 
+ 	E.buf->cx = ex;
+ 	E.buf->cy = ey;
+ 
+ 	free(a_text);
+ 	free(b_text);
+-	free(old_text);
+ 	free(repl);
+ }
+ 
+diff --git a/mutate.c b/mutate.c
+index b4c9447..3909c09 100644
+--- a/mutate.c
++++ b/mutate.c
+@@ -44,9 +44,8 @@ static int wantsFinalNewline(struct buffer *buf) {
+ /* Would this mutation delete the final newline and nothing else?
+  * The repair below would restore it, so it is refused. */
+ static int deletesOnlyFinalNewline(struct buffer *buf, int startx, int starty,
+-				   int endx, int endy, int old_len,
+-				   int repl_len) {
+-	if (old_len <= 0 || repl_len > 0)
++				   int endx, int endy, int repl_len) {
++	if ((startx == endx && starty == endy) || repl_len > 0)
+ 		return 0;
+ 	if (buf->numrows < 2)
+ 		return 0;
+@@ -92,24 +91,29 @@ static void restoreFinalNewline(struct buffer *buf) {
+  * the run at the head of the undo list; honoured only when exactly one
+  * record is pushed.  During an input burst the run is uncapped. */
+ static void mutateReplaceEx(struct buffer *buf, int startx, int starty,
+-			    int endx, int endy, const uint8_t *old_text,
+-			    int old_len, const uint8_t *repl, int repl_len,
+-			    int chain_to_prev, int coalesce, int *out_endx,
+-			    int *out_endy) {
++			    int endx, int endy, const uint8_t *repl,
++			    int repl_len, int chain_to_prev, int coalesce,
++			    int *out_endx, int *out_endy) {
+ 	/* Before clearRedos; out-params untouched on refusal. */
+ 	if (rejectIfReadOnly(buf))
+ 		return;
+ 
+ 	/* As above. */
+ 	if (wantsFinalNewline(buf) &&
+-	    deletesOnlyFinalNewline(buf, startx, starty, endx, endy, old_len,
+-				    repl_len))
++	    deletesOnlyFinalNewline(buf, startx, starty, endx, endy, repl_len))
+ 		return;
+ 
+-	if (old_len < 0 || repl_len < 0 || old_len > INT_MAX - 1 ||
+-	    repl_len > INT_MAX - 1)
++	if (repl_len < 0 || repl_len > INT_MAX - 1)
+ 		abort();
+ 
++	/* What the delete record restores: the buffer's own text, read
++	 * before anything changes.  The common pure insert skips this. */
++	int old_len = 0;
++	uint8_t *old_text = NULL;
++	if (startx != endx || starty != endy)
++		old_text = collectRegionText(buf, startx, starty, endx, endy,
++					     &old_len);
++
+ 	int is_replace = (old_len > 0 && repl_len > 0);
+ 	if (is_replace || chain_to_prev)
+ 		coalesce = 0;
+@@ -147,6 +151,7 @@ static void mutateReplaceEx(struct buffer *buf, int startx, int starty,
+ 	/* Perform deletion (bulkDelete calls adjustAllPoints internally) */
+ 	if (old_len > 0)
+ 		bulkDelete(buf, startx, starty, endx, endy);
++	free(old_text);
+ 
+ 	/* The logical insert end, as told to the caller. */
+ 	int iex = startx, iey = starty;
+@@ -191,36 +196,34 @@ static void mutateReplaceEx(struct buffer *buf, int startx, int starty,
+ }
+ 
+ void mutateReplace(struct buffer *buf, int startx, int starty, int endx,
+-		   int endy, const uint8_t *old_text, int old_len,
+-		   const uint8_t *repl, int repl_len, int chain_to_prev,
+-		   int *out_endx, int *out_endy) {
+-	mutateReplaceEx(buf, startx, starty, endx, endy, old_text, old_len,
+-			repl, repl_len, chain_to_prev, 0, out_endx, out_endy);
++		   int endy, const uint8_t *repl, int repl_len,
++		   int chain_to_prev, int *out_endx, int *out_endy) {
++	mutateReplaceEx(buf, startx, starty, endx, endy, repl, repl_len,
++			chain_to_prev, 0, out_endx, out_endy);
+ }
+ 
+ void mutateInsertChar(struct buffer *buf, int startx, int starty,
+ 		      const uint8_t *text, int len, int *out_endx,
+ 		      int *out_endy) {
+-	mutateReplaceEx(buf, startx, starty, startx, starty, NULL, 0, text, len,
+-			0, 1, out_endx, out_endy);
++	mutateReplaceEx(buf, startx, starty, startx, starty, text, len, 0, 1,
++			out_endx, out_endy);
+ }
+ 
+ void mutateDeleteChar(struct buffer *buf, int startx, int starty, int endx,
+-		      int endy, const uint8_t *old_text, int old_len) {
+-	mutateReplaceEx(buf, startx, starty, endx, endy, old_text, old_len,
+-			NULL, 0, 0, 1, NULL, NULL);
++		      int endy) {
++	mutateReplaceEx(buf, startx, starty, endx, endy, NULL, 0, 0, 1, NULL,
++			NULL);
+ }
+ 
+ void mutateDelete(struct buffer *buf, int startx, int starty, int endx,
+-		  int endy, const uint8_t *old_text, int old_len) {
+-	mutateReplace(buf, startx, starty, endx, endy, old_text, old_len, NULL,
+-		      0, 0, NULL, NULL);
++		  int endy) {
++	mutateReplace(buf, startx, starty, endx, endy, NULL, 0, 0, NULL, NULL);
+ }
+ 
+ void mutateInsert(struct buffer *buf, int startx, int starty,
+ 		  const uint8_t *text, int len, int *out_endx, int *out_endy) {
+-	mutateReplace(buf, startx, starty, startx, starty, NULL, 0, text, len,
+-		      0, out_endx, out_endy);
++	mutateReplace(buf, startx, starty, startx, starty, text, len, 0,
++		      out_endx, out_endy);
+ }
+ 
+ void mutateExtendRows(struct buffer *buf, int from_row, int n_rows) {
+diff --git a/mutate.h b/mutate.h
+index e96bd7a..dcadf79 100644
+--- a/mutate.h
++++ b/mutate.h
+@@ -28,8 +28,8 @@ uint8_t *collectRegionText(struct buffer *buf, int startx, int starty, int endx,
+  * (delete + insert) when both are non-empty, or a single undo
+  * when one side is empty.
+  *
+- * 'old_text' is the text being deleted.  Caller provides it
+- * (collected before mutation).  Length is 'old_len'.
++ * The deleted text is read from the buffer here, so the record always
++ * holds what the range held.
+  *
+  * 'repl' / 'repl_len' is the replacement text.  May be NULL/0 for
+  * a pure delete.
+@@ -51,13 +51,12 @@ uint8_t *collectRegionText(struct buffer *buf, int startx, int starty, int endx,
+  * Returns the end position of the inserted text in *out_endx,
+  * *out_endy (may be NULL if caller doesn't need them). */
+ void mutateReplace(struct buffer *buf, int startx, int starty, int endx,
+-		   int endy, const uint8_t *old_text, int old_len,
+-		   const uint8_t *repl, int repl_len, int chain_to_prev,
+-		   int *out_endx, int *out_endy);
++		   int endy, const uint8_t *repl, int repl_len,
++		   int chain_to_prev, int *out_endx, int *out_endy);
+ 
+ /* Convenience: pure delete. */
+ void mutateDelete(struct buffer *buf, int startx, int starty, int endx,
+-		  int endy, const uint8_t *old_text, int old_len);
++		  int endy);
+ 
+ /* Convenience: pure insert. */
+ void mutateInsert(struct buffer *buf, int startx, int starty,
+@@ -76,7 +75,7 @@ void mutateInsertChar(struct buffer *buf, int startx, int starty,
+ 		      const uint8_t *text, int len, int *out_endx,
+ 		      int *out_endy);
+ void mutateDeleteChar(struct buffer *buf, int startx, int starty, int endx,
+-		      int endy, const uint8_t *old_text, int old_len);
++		      int endy);
+ 
+ /* Append 'n_rows' empty lines to the end of buf.  Records a single
+  * pure-insert undo with paired=0.  Used by yankRectangle to extend
+diff --git a/region.c b/region.c
+index 2efb1af..fb459cf 100644
+--- a/region.c
++++ b/region.c
+@@ -338,19 +338,18 @@ void deleteRange(struct buffer *buf, int startx, int starty, int endx, int endy,
+ 	if (startx == endx && starty == endy)
+ 		return;
+ 
+-	int old_len;
+-	uint8_t *old_text =
+-		collectRegionText(buf, startx, starty, endx, endy, &old_len);
+-
+ 	/* Kill ring */
+ 	if (add_to_kill_ring) {
++		int old_len;
++		uint8_t *old_text = collectRegionText(buf, startx, starty, endx,
++						      endy, &old_len);
+ 		clearText(&E.kill);
+ 		E.kill.str = (uint8_t *)xstrdup((char *)old_text);
+ 		addToKillRing((char *)old_text, 0, 0, 0);
++		free(old_text);
+ 	}
+ 
+-	mutateDelete(buf, startx, starty, endx, endy, old_text, old_len);
+-	free(old_text);
++	mutateDelete(buf, startx, starty, endx, endy);
+ 
+ 	/* Set cursor to start of deleted range */
+ 	buf->cx = startx;
+@@ -522,9 +521,8 @@ void transformRange(struct buffer *buf, int startx, int starty, int endx,
+ 
+ 	orderPoints(&startx, &starty, &endx, &endy);
+ 
+-	int old_len;
+ 	uint8_t *old_text =
+-		collectRegionText(buf, startx, starty, endx, endy, &old_len);
++		collectRegionText(buf, startx, starty, endx, endy, NULL);
+ 
+ 	uint8_t *transformed = transformer(old_text);
+ 	/* A transformer may fail (transformerPipeCmd returns NULL when
+@@ -537,8 +535,8 @@ void transformRange(struct buffer *buf, int startx, int starty, int endx,
+ 	int repl_len = strlen((char *)transformed);
+ 
+ 	int ex, ey;
+-	mutateReplace(buf, startx, starty, endx, endy, old_text, old_len,
+-		      transformed, repl_len, 0, &ex, &ey);
++	mutateReplace(buf, startx, starty, endx, endy, transformed, repl_len, 0,
++		      &ex, &ey);
+ 
+ 	buf->cx = ex;
+ 	buf->cy = ey;
+@@ -842,8 +840,7 @@ void replaceRegex(void) {
+ 	offsetToCoords(startx, starty, old_text, last_off, &lx, &ly);
+ 
+ 	int ex, ey;
+-	mutateReplace(buf, fx, fy, lx, ly, old_text + first_off,
+-		      last_off - first_off, out, out_len, 0, &ex, &ey);
++	mutateReplace(buf, fx, fy, lx, ly, out, out_len, 0, &ex, &ey);
+ 
+ 	buf->cx = ex;
+ 	buf->cy = ey;
+@@ -885,10 +882,7 @@ void stringRectangleWithText(uint8_t *string) {
+ 	normalizeRectCols(E.buf, &topx, &topy, &botx, &boty);
+ 
+ 	/* Use full-row region so replacement text captures all content */
+-	int old_len;
+ 	int region_endx = buf->row[boty].size;
+-	uint8_t *old_text =
+-		collectRegionText(buf, 0, topy, region_endx, boty, &old_len);
+ 
+ 	/* Build replacement text: for each row, replace columns [topx..botx)
+ 	 * with 'string', padding short rows with spaces as needed. */
+@@ -929,12 +923,11 @@ void stringRectangleWithText(uint8_t *string) {
+ 	uint8_t *out = dbuf_detach(&d, &out_len);
+ 
+ 	int ex, ey;
+-	mutateReplace(buf, 0, topy, region_endx, boty, old_text, old_len, out,
+-		      out_len, 0, &ex, &ey);
++	mutateReplace(buf, 0, topy, region_endx, boty, out, out_len, 0, &ex,
++		      &ey);
+ 
+ 	rectPlaceCursor(buf, topx, topy);
+ 
+-	free(old_text);
+ 	free(out);
+ 	E.buf->mark_active = 0;
+ 	restoreKill(okill);
+@@ -1008,12 +1001,8 @@ void killRectangle(void) {
+ 	int rw = botx - topx;
+ 	int rh = (boty - topy) + 1;
+ 
+-	/* Collect linear region text for undo */
+-	int old_len;
+ 	/* Use full-row region so replacement text includes all content */
+ 	int region_endx = buf->row[boty].size;
+-	uint8_t *old_text =
+-		collectRegionText(buf, 0, topy, region_endx, boty, &old_len);
+ 
+ 	/* Extract rectangle columns into flat buffer for kill ring */
+ 	uint8_t *rectBuf = extractRectColumns(buf, topx, topy, rw, rh);
+@@ -1056,8 +1045,8 @@ void killRectangle(void) {
+ 	uint8_t *out = dbuf_detach(&d, &out_len);
+ 
+ 	int ex, ey;
+-	mutateReplace(buf, 0, topy, region_endx, boty, old_text, old_len, out,
+-		      out_len, 0, &ex, &ey);
++	mutateReplace(buf, 0, topy, region_endx, boty, out, out_len, 0, &ex,
++		      &ey);
+ 
+ 	rectPlaceCursor(buf, topx, topy);
+ 
+@@ -1069,7 +1058,6 @@ void killRectangle(void) {
+ 	E.kill.rect_height = rh;
+ 	addToKillRing((char *)E.kill.str, 1, rw, rh);
+ 
+-	free(old_text);
+ 	free(out);
+ 	E.buf->mark_active = 0;
+ 	clearText(&saved);
+@@ -1121,11 +1109,8 @@ void yankRectangle(void) {
+ 		needs_extension = 1;
+ 	}
+ 
+-	/* Collect old text for the full-row region [0,topy]..[eol,boty] */
++	/* The full-row region [0,topy]..[eol,boty] */
+ 	int region_endx = buf->row[boty].size;
+-	int old_len;
+-	uint8_t *old_text =
+-		collectRegionText(buf, 0, topy, region_endx, boty, &old_len);
+ 
+ 	/* Build new text: for each row, insert rectangle slice at topx,
+ 	 * padding with spaces if the row is shorter than topx. */
+@@ -1166,12 +1151,11 @@ void yankRectangle(void) {
+ 	uint8_t *out = dbuf_detach(&d, &out_len);
+ 	free(slice);
+ 
+-	mutateReplace(buf, 0, topy, region_endx, boty, old_text, old_len, out,
+-		      out_len, needs_extension, NULL, NULL);
++	mutateReplace(buf, 0, topy, region_endx, boty, out, out_len,
++		      needs_extension, NULL, NULL);
+ 
+ 	rectPlaceCursor(buf, topx, topy);
+ 
+-	free(old_text);
+ 	free(out);
+ 	E.buf->mark_active = 0;
+ 	clearText(&E.kill);
+diff --git a/tests/test_undo.c b/tests/test_undo.c
+index c822ad5..c6abf76 100644
+--- a/tests/test_undo.c
++++ b/tests/test_undo.c
+@@ -149,7 +149,7 @@ void test_mutate_replace_readonly(void) {
+ 	TEST_ASSERT_NOT_NULL(buf->redo);
+ 
+ 	buf->read_only = 1;
+-	mutateReplace(buf, 0, 0, 5, 0, (const uint8_t *)"Hello", 5,
++	mutateReplace(buf, 0, 0, 5, 0,
+ 		      (const uint8_t *)"bye", 3, 0, NULL, NULL);
+ 
+ 	TEST_ASSERT_EQUAL_STRING("Hello", row_str(buf, 0));

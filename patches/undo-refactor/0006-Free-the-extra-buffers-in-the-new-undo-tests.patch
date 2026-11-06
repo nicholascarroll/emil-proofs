@@ -1,0 +1,46 @@
+From 3e12bf3ca86ba49af3fcbe448d6a99a0f0171716 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 07:49:00 +1100
+Subject: [PATCH 6/7] Free the extra buffers in the new undo tests
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ tests/test_undo.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/tests/test_undo.c b/tests/test_undo.c
+index 5806d0f..7987145 100644
+--- a/tests/test_undo.c
++++ b/tests/test_undo.c
+@@ -11,6 +11,14 @@
+ #include "keymap.h"
+ #include <stdint.h>
+ 
++/* For tests that make several buffers: the harness frees only the last. */
++static void drop_test_buffer(struct buffer *buf) {
++	destroyBuffer(buf);
++	E.buf = NULL;
++	E.headbuf = NULL;
++	E.windows[0]->buf = NULL;
++}
++
+ /* ---- Truncated UTF-8 at the end of a row ---- */
+ 
+ /* C-d read and recorded bytes past the row, so undo added a NUL. */
+@@ -28,6 +36,7 @@ void test_undo_delchar_truncated_lead(void) {
+ 		TEST_ASSERT_EQUAL_INT((int)strlen(leads[i]), buf->row[0].size);
+ 		doRedo(buf, 1);
+ 		TEST_ASSERT_EQUAL_STRING("a", row_str(buf, 0));
++		drop_test_buffer(buf);
+ 	}
+ }
+ 
+@@ -94,6 +103,7 @@ static void assert_range_refused(int sx, int sy, int ex, int ey) {
+ 	/* A caller's "move to the end of the edit" stays put. */
+ 	TEST_ASSERT_EQUAL_INT(2, ox);
+ 	TEST_ASSERT_EQUAL_INT(1, oy);
++	drop_test_buffer(buf);
+ }
+ 
+ void test_mutate_refuses_invalid_ranges(void) {

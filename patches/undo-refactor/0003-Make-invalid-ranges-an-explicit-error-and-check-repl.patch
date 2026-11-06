@@ -1,0 +1,711 @@
+From 330ee8dd119525b0f4151f4f58d6b228c53f2771 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 07:37:56 +1100
+Subject: [PATCH 3/7] Make invalid ranges an explicit error, and check replay
+ against the text
+
+mutateReplace and friends return MUTATE_INVALID, and bulkDelete and bulkInsert
+return -1, with nothing changed.  bulkDelete no longer clamps: its clamped range
+disagreed with the record, so undo didn't restore the text.  bulkInsert past a
+row was a negative memmove.
+
+Undo and redo now check a record against the text before replaying it, and
+report UNDO_MISMATCH rather than corrupt the buffer.  Text can still change
+without a record (TAB in a prompt, a writable special buffer being rebuilt).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ find.c            |   5 +-
+ keymap.c          |   9 ++-
+ mutate.c          |  65 +++++++++++++++-------
+ mutate.h          |  27 ++++++---
+ region.c          |   3 +-
+ tests/test_undo.c | 138 ++++++++++++++++++++++++++++++++++++++++++++--
+ undo.c            | 117 +++++++++++++++++++++++++++------------
+ undo.h            |  19 ++++++-
+ 8 files changed, 304 insertions(+), 79 deletions(-)
+
+diff --git a/find.c b/find.c
+index 97158c7..a089bc2 100644
+--- a/find.c
++++ b/find.c
+@@ -650,8 +650,9 @@ void queryReplace(void) {
+ 			break;
+ 		case 'U':
+ 			if (E.buf->undo != first) {
+-				while (E.buf->undo != first)
+-					doUndo(E.buf, 1);
++				while (E.buf->undo != first &&
++				       doUndo(E.buf, 1) == UNDO_DONE)
++					;
+ 				E.buf->markx =
+ 					E.buf->cx +
+ 					strlen((const char *)replace_orig);
+diff --git a/keymap.c b/keymap.c
+index 2113046..af448e7 100644
+--- a/keymap.c
++++ b/keymap.c
+@@ -600,6 +600,7 @@ static void reportUndo(enum undoResult r, const char *done,
+ 		setStatusMessage("%s", done);
+ 	else if (r == UNDO_EXHAUSTED)
+ 		setStatusMessage("%s", exhausted);
++	/* UNDO_REFUSED and UNDO_MISMATCH report themselves. */
+ }
+ 
+ static int dispatchMove(int c, int uarg, struct window *win) {
+@@ -862,13 +863,15 @@ static int dispatchBuffer(int c, int uarg) {
+ 						    "Buffer set to writable");
+ 		return 1;
+ 	case CMD_REDO:
+-		reportUndo(doRedo(E.buf, uarg), "Redo.",
+-			   "No further redo information.");
+-		if (E.buf->redo != NULL) {
++	{
++		enum undoResult r = doRedo(E.buf, uarg);
++		reportUndo(r, "Redo.", "No further redo information.");
++		if (r != UNDO_MISMATCH && E.buf->redo != NULL) {
+ 			setStatusMessage("Press C-_ or C-/ to redo again");
+ 			E.micro = CMD_REDO;
+ 		}
+ 		return 1;
++	}
+ 	default:
+ 		return 0;
+ 	}
+diff --git a/mutate.c b/mutate.c
+index 3909c09..5c7e997 100644
+--- a/mutate.c
++++ b/mutate.c
+@@ -3,6 +3,7 @@
+ #include "adjust.h"
+ #include "buffer.h"
+ #include "dbuf.h"
++#include "message.h"
+ #include "undo.h"
+ #include "util.h"
+ #include "wrap.h"
+@@ -87,21 +88,38 @@ static void restoreFinalNewline(struct buffer *buf) {
+ 	bulkInsert(buf, atx, aty, (const uint8_t *)"\n", 1);
+ }
+ 
++/* What a caller's "move to the end of the edit" gets when nothing changed. */
++static void cursorAsEnd(const struct buffer *buf, int *out_endx, int *out_endy) {
++	if (out_endx)
++		*out_endx = buf->cx;
++	if (out_endy)
++		*out_endy = buf->cy;
++}
++
+ /* Shared body of every mutation.  'coalesce' merges the record into
+  * the run at the head of the undo list; honoured only when exactly one
+  * record is pushed.  During an input burst the run is uncapped. */
+-static void mutateReplaceEx(struct buffer *buf, int startx, int starty,
+-			    int endx, int endy, const uint8_t *repl,
+-			    int repl_len, int chain_to_prev, int coalesce,
+-			    int *out_endx, int *out_endy) {
++static enum mutateResult mutateReplaceEx(struct buffer *buf, int startx,
++					 int starty, int endx, int endy,
++					 const uint8_t *repl, int repl_len,
++					 int chain_to_prev, int coalesce,
++					 int *out_endx, int *out_endy) {
+ 	/* Before clearRedos; out-params untouched on refusal. */
+ 	if (rejectIfReadOnly(buf))
+-		return;
++		return MUTATE_REFUSED;
++
++	if (!bufferRangeValid(buf, startx, starty, endx, endy)) {
++		setStatusMessage("Invalid edit range; nothing changed");
++		cursorAsEnd(buf, out_endx, out_endy);
++		return MUTATE_INVALID;
++	}
+ 
+ 	/* As above. */
+ 	if (wantsFinalNewline(buf) &&
+-	    deletesOnlyFinalNewline(buf, startx, starty, endx, endy, repl_len))
+-		return;
++	    deletesOnlyFinalNewline(buf, startx, starty, endx, endy, repl_len)) {
++		cursorAsEnd(buf, out_endx, out_endy);
++		return MUTATE_REFUSED;
++	}
+ 
+ 	if (repl_len < 0 || repl_len > INT_MAX - 1)
+ 		abort();
+@@ -193,45 +211,51 @@ static void mutateReplaceEx(struct buffer *buf, int startx, int starty,
+ 		*out_endx = iex;
+ 	if (out_endy)
+ 		*out_endy = iey;
++	return MUTATE_DONE;
+ }
+ 
+-void mutateReplace(struct buffer *buf, int startx, int starty, int endx,
++enum mutateResult mutateReplace(struct buffer *buf, int startx, int starty, int endx,
+ 		   int endy, const uint8_t *repl, int repl_len,
+ 		   int chain_to_prev, int *out_endx, int *out_endy) {
+-	mutateReplaceEx(buf, startx, starty, endx, endy, repl, repl_len,
++	return mutateReplaceEx(buf, startx, starty, endx, endy, repl, repl_len,
+ 			chain_to_prev, 0, out_endx, out_endy);
+ }
+ 
+-void mutateInsertChar(struct buffer *buf, int startx, int starty,
++enum mutateResult mutateInsertChar(struct buffer *buf, int startx, int starty,
+ 		      const uint8_t *text, int len, int *out_endx,
+ 		      int *out_endy) {
+-	mutateReplaceEx(buf, startx, starty, startx, starty, text, len, 0, 1,
++	return mutateReplaceEx(buf, startx, starty, startx, starty, text, len, 0, 1,
+ 			out_endx, out_endy);
+ }
+ 
+-void mutateDeleteChar(struct buffer *buf, int startx, int starty, int endx,
++enum mutateResult mutateDeleteChar(struct buffer *buf, int startx, int starty, int endx,
+ 		      int endy) {
+-	mutateReplaceEx(buf, startx, starty, endx, endy, NULL, 0, 0, 1, NULL,
++	return mutateReplaceEx(buf, startx, starty, endx, endy, NULL, 0, 0, 1, NULL,
+ 			NULL);
+ }
+ 
+-void mutateDelete(struct buffer *buf, int startx, int starty, int endx,
++enum mutateResult mutateDelete(struct buffer *buf, int startx, int starty, int endx,
+ 		  int endy) {
+-	mutateReplace(buf, startx, starty, endx, endy, NULL, 0, 0, NULL, NULL);
++	return mutateReplace(buf, startx, starty, endx, endy, NULL, 0, 0, NULL, NULL);
+ }
+ 
+-void mutateInsert(struct buffer *buf, int startx, int starty,
++enum mutateResult mutateInsert(struct buffer *buf, int startx, int starty,
+ 		  const uint8_t *text, int len, int *out_endx, int *out_endy) {
+-	mutateReplace(buf, startx, starty, startx, starty, text, len, 0,
++	return mutateReplace(buf, startx, starty, startx, starty, text, len, 0,
+ 		      out_endx, out_endy);
+ }
+ 
+-void mutateExtendRows(struct buffer *buf, int from_row, int n_rows) {
++enum mutateResult mutateExtendRows(struct buffer *buf, int from_row, int n_rows) {
+ 	if (rejectIfReadOnly(buf))
+-		return;
++		return MUTATE_REFUSED;
+ 
+ 	if (n_rows <= 0)
+-		return;
++		return MUTATE_DONE;
++
++	if (from_row != buf->numrows) {
++		setStatusMessage("Invalid edit range; nothing changed");
++		return MUTATE_INVALID;
++	}
+ 
+ 	clearRedos(buf);
+ 
+@@ -270,4 +294,5 @@ void mutateExtendRows(struct buffer *buf, int from_row, int n_rows) {
+ 	adjustAllPoints(buf, ext->startx, ext->starty, ext->endx, ext->endy, 0);
+ 
+ 	markBufferDirty(buf);
++	return MUTATE_DONE;
+ }
+diff --git a/mutate.h b/mutate.h
+index dcadf79..50b9c2b 100644
+--- a/mutate.h
++++ b/mutate.h
+@@ -22,6 +22,12 @@
+ uint8_t *collectRegionText(struct buffer *buf, int startx, int starty, int endx,
+ 			   int endy, int *out_len);
+ 
++enum mutateResult {
++	MUTATE_DONE,
++	MUTATE_REFUSED, /* read-only, or would delete only the final newline */
++	MUTATE_INVALID, /* no such range: nothing changed, and reported */
++};
++
+ /* Delete text in [startx,starty]..[endx,endy], insert 'repl' at
+  * (startx,starty).  Either the delete range or repl may be empty
+  * (pure insert or pure delete).  Records a paired undo
+@@ -40,7 +46,12 @@ uint8_t *collectRegionText(struct buffer *buf, int startx, int starty, int endx,
+  *
+  * Refuses read-only buffers before any side effect (including
+  * clearRedos): this is the authoritative check for the mutation
+- * layer.  On refusal, *out_endx and *out_endy are NOT written.
++ * layer.  On that refusal, *out_endx and *out_endy are NOT written.
++ *
++ * The range must exist and start must not be after end, or the result
++ * is MUTATE_INVALID.  Then, as when refusing to delete only the final
++ * newline, nothing changes and the out-params get the current cursor,
++ * so a caller's "move to the end of the edit" leaves it where it was.
+  *
+  * Calls clearRedos, records undo, performs mutation via
+  * bulkInsert/bulkDelete, calls adjustAllPoints (inside bulk ops),
+@@ -50,16 +61,16 @@ uint8_t *collectRegionText(struct buffer *buf, int startx, int starty, int endx,
+  *
+  * Returns the end position of the inserted text in *out_endx,
+  * *out_endy (may be NULL if caller doesn't need them). */
+-void mutateReplace(struct buffer *buf, int startx, int starty, int endx,
++enum mutateResult mutateReplace(struct buffer *buf, int startx, int starty, int endx,
+ 		   int endy, const uint8_t *repl, int repl_len,
+ 		   int chain_to_prev, int *out_endx, int *out_endy);
+ 
+ /* Convenience: pure delete. */
+-void mutateDelete(struct buffer *buf, int startx, int starty, int endx,
++enum mutateResult mutateDelete(struct buffer *buf, int startx, int starty, int endx,
+ 		  int endy);
+ 
+ /* Convenience: pure insert. */
+-void mutateInsert(struct buffer *buf, int startx, int starty,
++enum mutateResult mutateInsert(struct buffer *buf, int startx, int starty,
+ 		  const uint8_t *text, int len, int *out_endx, int *out_endy);
+ 
+ /* Single interactive edits — one keystroke's worth.  Identical to
+@@ -71,10 +82,10 @@ void mutateInsert(struct buffer *buf, int startx, int starty,
+  * mutations (yank, kill, regex replace, insert-file) must use
+  * mutateInsert / mutateDelete / mutateReplace, whose records always
+  * stand alone. */
+-void mutateInsertChar(struct buffer *buf, int startx, int starty,
++enum mutateResult mutateInsertChar(struct buffer *buf, int startx, int starty,
+ 		      const uint8_t *text, int len, int *out_endx,
+ 		      int *out_endy);
+-void mutateDeleteChar(struct buffer *buf, int startx, int starty, int endx,
++enum mutateResult mutateDeleteChar(struct buffer *buf, int startx, int starty, int endx,
+ 		      int endy);
+ 
+ /* Append 'n_rows' empty lines to the end of buf.  Records a single
+@@ -85,7 +96,7 @@ void mutateDeleteChar(struct buffer *buf, int startx, int starty, int endx,
+  *
+  * 'from_row' is the row count before extension (buf->numrows at the
+  * time of the call); passed explicitly so the caller's pre-state is
+- * unambiguous. */
+-void mutateExtendRows(struct buffer *buf, int from_row, int n_rows);
++ * unambiguous.  Anything else is MUTATE_INVALID. */
++enum mutateResult mutateExtendRows(struct buffer *buf, int from_row, int n_rows);
+ 
+ #endif
+diff --git a/region.c b/region.c
+index fb459cf..9e16087 100644
+--- a/region.c
++++ b/region.c
+@@ -483,7 +483,8 @@ void yankPop(int uarg) {
+ 		return;
+ 	}
+ 
+-	doUndo(E.buf, 1);
++	if (doUndo(E.buf, 1) != UNDO_DONE)
++		return;
+ 
+ 	if (uarg == UARG_REVERSE) {
+ 		/* M-- M-y: cycle toward newer kills. */
+diff --git a/tests/test_undo.c b/tests/test_undo.c
+index c6abf76..1079b5b 100644
+--- a/tests/test_undo.c
++++ b/tests/test_undo.c
+@@ -31,6 +31,126 @@ void test_undo_delchar_truncated_lead(void) {
+ 	}
+ }
+ 
++/* ---- Invalid ranges are refused ---- */
++
++/* One record and one redo entry, so "nothing changed" means something. */
++static struct buffer *make_invalid_range_buffer(void) {
++	const char *lines[] = { "abc", "def" };
++	struct buffer *buf = make_test_buffer_lines(lines, 2);
++	mutateInsert(buf, 0, 0, (const uint8_t *)"X", 1, NULL, NULL);
++	mutateInsert(buf, 1, 0, (const uint8_t *)"Y", 1, NULL, NULL);
++	doUndo(buf, 1);
++	return buf;
++}
++
++static void assert_range_refused(int sx, int sy, int ex, int ey) {
++	struct buffer *buf = make_invalid_range_buffer();
++	int numrows = buf->numrows;
++	struct undo *undo = buf->undo, *redo = buf->redo;
++	buf->cx = 2;
++	buf->cy = 1;
++	int ox = -9, oy = -9;
++
++	TEST_ASSERT_EQUAL_INT(MUTATE_INVALID,
++			      mutateReplace(buf, sx, sy, ex, ey,
++					    (const uint8_t *)"Z", 1, 0, &ox, &oy));
++	TEST_ASSERT_EQUAL_INT(MUTATE_INVALID, mutateDelete(buf, sx, sy, ex, ey));
++	TEST_ASSERT_EQUAL_INT(MUTATE_INVALID,
++			      mutateDeleteChar(buf, sx, sy, ex, ey));
++	TEST_ASSERT_EQUAL_INT(-1, bulkDelete(buf, sx, sy, ex, ey));
++
++	TEST_ASSERT_EQUAL_STRING("Xabc", row_str(buf, 0));
++	TEST_ASSERT_EQUAL_STRING("def", row_str(buf, 1));
++	TEST_ASSERT_EQUAL_INT(numrows, buf->numrows);
++	TEST_ASSERT_TRUE(buf->undo == undo);
++	TEST_ASSERT_TRUE(buf->redo == redo);
++	/* A caller's "move to the end of the edit" stays put. */
++	TEST_ASSERT_EQUAL_INT(2, ox);
++	TEST_ASSERT_EQUAL_INT(1, oy);
++}
++
++void test_mutate_refuses_invalid_ranges(void) {
++	assert_range_refused(1, 0, 9, 0);   /* end x past its row */
++	assert_range_refused(1, 0, 9, 1);   /* end x past a later row */
++	assert_range_refused(1, 0, 1, 7);   /* end row past the last */
++	assert_range_refused(2, 0, 1, 0);   /* reversed on one row */
++	assert_range_refused(1, 1, 1, 0);   /* reversed across rows */
++	assert_range_refused(9, 0, 0, 1);   /* start x past its row */
++	assert_range_refused(0, 7, 0, 8);   /* start row past the last */
++	assert_range_refused(-1, 0, 1, 0);  /* negative */
++	assert_range_refused(0, -1, 1, 0);
++}
++
++void test_mutate_refuses_invalid_insert(void) {
++	struct buffer *buf = make_invalid_range_buffer();
++	struct undo *undo = buf->undo;
++	const uint8_t *x = (const uint8_t *)"x";
++	TEST_ASSERT_EQUAL_INT(MUTATE_INVALID,
++			      mutateInsert(buf, 9, 0, x, 1, NULL, NULL));
++	TEST_ASSERT_EQUAL_INT(MUTATE_INVALID,
++			      mutateInsert(buf, 0, 7, x, 1, NULL, NULL));
++	TEST_ASSERT_EQUAL_INT(MUTATE_INVALID,
++			      mutateInsertChar(buf, 9, 0, x, 1, NULL, NULL));
++	TEST_ASSERT_EQUAL_INT(-1, bulkInsert(buf, 9, 0, x, 1));
++	TEST_ASSERT_EQUAL_STRING("Xabc", row_str(buf, 0));
++	TEST_ASSERT_TRUE(buf->undo == undo);
++}
++
++void test_mutate_extend_refuses_wrong_row_count(void) {
++	struct buffer *buf = make_invalid_range_buffer();
++	int numrows = buf->numrows;
++	TEST_ASSERT_EQUAL_INT(MUTATE_INVALID, mutateExtendRows(buf, 1, 1));
++	TEST_ASSERT_EQUAL_INT(numrows, buf->numrows);
++	TEST_ASSERT_EQUAL_INT(MUTATE_DONE, mutateExtendRows(buf, numrows, 1));
++	TEST_ASSERT_EQUAL_INT(numrows + 1, buf->numrows);
++}
++
++/* ---- Replay checks the record against the text ---- */
++
++/* Text rebuilt outside the mutation layer, keeping its history, as a
++ * writable special buffer's is. */
++void test_undo_reports_stale_position(void) {
++	struct buffer *buf = make_test_buffer("a long line of text");
++	mutateInsert(buf, 15, 0, (const uint8_t *)"x", 1, NULL, NULL);
++	bufferResetRows(buf);
++	insertRow(buf, 0, (const uint8_t *)"short", 5);
++
++	struct undo *undo = buf->undo;
++	TEST_ASSERT_EQUAL_INT(UNDO_MISMATCH, doUndo(buf, 1));
++	TEST_ASSERT_EQUAL_STRING("short", row_str(buf, 0));
++	TEST_ASSERT_TRUE(buf->undo == undo);
++	TEST_ASSERT_TRUE(buf->redo == NULL);
++}
++
++/* A record's range still exists, but holds other text: a change made
++ * without a record, as TAB in a prompt does. */
++void test_undo_reports_changed_text(void) {
++	struct buffer *buf = make_test_buffer("");
++	mutateInsert(buf, 0, 0, (const uint8_t *)"ab", 2, NULL, NULL);
++	buf->cx = 0;
++	buf->cy = 0;
++	insertChar(buf, '\t', 1);
++
++	struct undo *undo = buf->undo;
++	TEST_ASSERT_EQUAL_INT(UNDO_MISMATCH, doUndo(buf, 1));
++	TEST_ASSERT_EQUAL_STRING("\tab", row_str(buf, 0));
++	TEST_ASSERT_TRUE(buf->undo == undo);
++}
++
++/* A stale redo entry is reported in the same way. */
++void test_redo_reports_changed_text(void) {
++	struct buffer *buf = make_test_buffer("abc");
++	mutateDelete(buf, 0, 0, 1, 0);
++	doUndo(buf, 1);
++	bufferResetRows(buf);
++	insertRow(buf, 0, (const uint8_t *)"xyz", 3);
++
++	struct undo *redo = buf->redo;
++	TEST_ASSERT_EQUAL_INT(UNDO_MISMATCH, doRedo(buf, 1));
++	TEST_ASSERT_EQUAL_STRING("xyz", row_str(buf, 0));
++	TEST_ASSERT_TRUE(buf->redo == redo);
++}
++
+ /* ---- Basic undo/redo ---- */
+ 
+ void test_undo_insert_chars(void) {
+@@ -806,17 +926,17 @@ void test_minibuffer_reset_drops_stale_undo_records(void) {
+ }
+ 
+ /* Whatever a record claims, bulkDelete must not derive a negative
+- * length from it. */
+-void test_bulk_delete_clamps_out_of_range_end(void) {
++ * length from it.  A range the rows don't hold is refused, not clamped. */
++void test_bulk_delete_refuses_out_of_range_end(void) {
+ 	struct buffer *buf = make_test_buffer("abc");
+ 	E.buf = buf;
+ 
+ 	/* endx far past the end of a 3-byte row, as a stale record
+ 	 * would give. */
+-	bulkDelete(buf, 0, 0, 99, 0);
++	TEST_ASSERT_EQUAL_INT(-1, bulkDelete(buf, 0, 0, 99, 0));
+ 
+-	TEST_ASSERT_EQUAL_INT(0, buf->row[0].size);
+-	TEST_ASSERT_EQUAL_STRING("", (char *)buf->row[0].chars);
++	TEST_ASSERT_EQUAL_INT(3, buf->row[0].size);
++	TEST_ASSERT_EQUAL_STRING("abc", (char *)buf->row[0].chars);
+ 
+ }
+ 
+@@ -964,6 +1084,12 @@ int main(void) {
+ 	TEST_BEGIN();
+ 
+ 	RUN_TEST(test_undo_delchar_truncated_lead);
++	RUN_TEST(test_mutate_refuses_invalid_ranges);
++	RUN_TEST(test_mutate_refuses_invalid_insert);
++	RUN_TEST(test_mutate_extend_refuses_wrong_row_count);
++	RUN_TEST(test_undo_reports_stale_position);
++	RUN_TEST(test_undo_reports_changed_text);
++	RUN_TEST(test_redo_reports_changed_text);
+ 	RUN_TEST(test_undo_insert_chars);
+ 	RUN_TEST(test_undo_then_redo);
+ 	RUN_TEST(test_multiple_sequential_undos);
+@@ -1004,7 +1130,7 @@ int main(void) {
+ 	RUN_TEST(test_rectangle_yank_at_virtual_eof_roundtrip);
+ 	RUN_TEST(test_redo_chain_releases_undo);
+ 	RUN_TEST(test_minibuffer_reset_drops_stale_undo_records);
+-	RUN_TEST(test_bulk_delete_clamps_out_of_range_end);
++	RUN_TEST(test_bulk_delete_refuses_out_of_range_end);
+ 
+ 	/* Spec 05 P5 */
+ 	RUN_TEST(test_undo_forward_delete_returns_cursor_to_start);
+diff --git a/undo.c b/undo.c
+index 70da87b..cf7ba2a 100644
+--- a/undo.c
++++ b/undo.c
+@@ -5,6 +5,7 @@
+ #include "buffer.h"
+ #include "dbuf.h"
+ #include "emil.h"
++#include "message.h"
+ 
+ #include "region.h"
+ #include "unicode.h"
+@@ -37,6 +38,17 @@ void computeInsertEnd(const uint8_t *text, int len, int startx, int starty,
+ 	*endy = ey;
+ }
+ 
++int bufferPosValid(const struct buffer *buf, int x, int y) {
++	return y >= 0 && y < buf->numrows && x >= 0 && x <= buf->row[y].size;
++}
++
++int bufferRangeValid(const struct buffer *buf, int startx, int starty, int endx,
++		     int endy) {
++	return bufferPosValid(buf, startx, starty) &&
++	       bufferPosValid(buf, endx, endy) &&
++	       (starty < endy || (starty == endy && startx <= endx));
++}
++
+ /* Perform the row-array mutation for an insert at (startx, starty).
+  * Does NOT record undo. */
+ static void bulkInsertRaw(struct buffer *buf, int startx, int starty,
+@@ -44,9 +56,6 @@ static void bulkInsertRaw(struct buffer *buf, int startx, int starty,
+ 	if (datalen <= 0)
+ 		return;
+ 
+-	if (starty >= buf->numrows)
+-		return;
+-
+ 	/* Scan for newlines to decide single-line vs multi-line */
+ 	const uint8_t *first_nl = memchr(data, '\n', datalen);
+ 
+@@ -145,10 +154,12 @@ static void bulkInsertRaw(struct buffer *buf, int startx, int starty,
+  * Records name the insertion's own coordinates, so replaying
+  * one through here is the identity translation and adjusts on the
+  * range the record states. */
+-void bulkInsert(struct buffer *buf, int startx, int starty, const uint8_t *data,
+-		int datalen) {
++int bulkInsert(struct buffer *buf, int startx, int starty, const uint8_t *data,
++	       int datalen) {
++	if (!bufferPosValid(buf, startx, starty))
++		return -1;
+ 	if (datalen <= 0)
+-		return;
++		return 0;
+ 
+ 	int log_endx, log_endy;
+ 	computeInsertEnd(data, datalen, startx, starty, &log_endx, &log_endy);
+@@ -156,27 +167,13 @@ void bulkInsert(struct buffer *buf, int startx, int starty, const uint8_t *data,
+ 	bulkInsertRaw(buf, startx, starty, data, datalen);
+ 
+ 	adjustAllPoints(buf, startx, starty, log_endx, log_endy, 0);
++	return 0;
+ }
+ 
+ /* Bulk-delete text from (startx, starty) to (endx, endy).*/
+-void bulkDelete(struct buffer *buf, int startx, int starty, int endx,
+-		int endy) {
+-	if (starty >= buf->numrows)
+-		return;
+-
+-	/* Clamp to what the rows hold.*/
+-	if (endy >= buf->numrows)
+-		endy = buf->numrows - 1;
+-	if (startx > buf->row[starty].size)
+-		startx = buf->row[starty].size;
+-	if (endx > buf->row[endy].size)
+-		endx = buf->row[endy].size;
+-	if (startx < 0)
+-		startx = 0;
+-	if (endx < 0)
+-		endx = 0;
+-	if (starty == endy && endx < startx)
+-		endx = startx;
++int bulkDelete(struct buffer *buf, int startx, int starty, int endx, int endy) {
++	if (!bufferRangeValid(buf, startx, starty, endx, endy))
++		return -1;
+ 
+ 	/* A multi-row delete joins the start row's prefix to the end
+ 	 * row's suffix.  Check that the joined row fits before
+@@ -205,9 +202,6 @@ void bulkDelete(struct buffer *buf, int startx, int starty, int endx,
+ 
+ 		/* After deleting interior rows, the end row is now at
+ 		 * starty + 1 */
+-		if (starty + 1 >= buf->numrows)
+-			return;
+-
+ 		struct erow *first = &buf->row[starty];
+ 		struct erow *last = &buf->row[starty + 1];
+ 		int new_size = startx + (last->size - endx);
+@@ -221,16 +215,59 @@ void bulkDelete(struct buffer *buf, int startx, int starty, int endx,
+ 		delRow(buf, starty + 1);
+ 		markBufferDirty(buf);
+ 	}
++	return 0;
++}
++
++/* Does the text in a valid range hold exactly these bytes? */
++static int regionHolds(const struct buffer *buf, int startx, int starty,
++		       int endx, int endy, const uint8_t *data, int datalen) {
++	int x = startx, y = starty, i = 0;
++	while (y != endy || x != endx) {
++		if (i >= datalen)
++			return 0;
++		if (x >= buf->row[y].size) {
++			if (data[i] != '\n')
++				return 0;
++			y++;
++			x = 0;
++		} else {
++			if (data[i] != buf->row[y].chars[x])
++				return 0;
++			x++;
++		}
++		i++;
++	}
++	return i == datalen;
++}
++
++/* Replay relies on the history matching the text.  Text changed outside
++ * the mutation layer can break that, so check it: a delete must find
++ * what the record says, and an insert must have a place to go. */
++static int replayMatchesText(const struct buffer *buf, const struct undo *node,
++			     int is_delete) {
++	if (!is_delete)
++		return bufferPosValid(buf, node->startx, node->starty);
++	return bufferRangeValid(buf, node->startx, node->starty, node->endx,
++				node->endy) &&
++	       regionHolds(buf, node->startx, node->starty, node->endx,
++			   node->endy, node->data, node->datalen);
+ }
+ 
+ /* Apply one undo or redo step: replay the mutation and move the node
+- * between the two lists. */
+-static void undoStep(struct buffer *buf, int redo) {
++ * between the two lists.  Returns 0, or -1 with nothing changed and the
++ * problem reported if the record doesn't match the text. */
++static int undoStep(struct buffer *buf, int redo) {
+ 	struct undo **src = redo ? &buf->redo : &buf->undo;
+ 	struct undo **dst = redo ? &buf->undo : &buf->redo;
+ 	struct undo *node = *src;
+ 	int is_delete = redo ? node->delete : !node->delete;
+ 
++	if (!replayMatchesText(buf, node, is_delete)) {
++		setStatusMessage("Undo history doesn't match the text; "
++				 "nothing changed");
++		return -1;
++	}
++
+ 	if (is_delete) {
+ 		bulkDelete(buf, node->startx, node->starty, node->endx,
+ 			   node->endy);
+@@ -262,6 +299,7 @@ static void undoStep(struct buffer *buf, int redo) {
+ 
+ 	/* Close whatever now sits at the head of the undo list. */
+ 	undoCloseRun(buf);
++	return 0;
+ }
+ 
+ enum undoResult doUndo(struct buffer *buf, int count) {
+@@ -280,10 +318,14 @@ enum undoResult doUndo(struct buffer *buf, int count) {
+ 			return UNDO_EXHAUSTED;
+ 		}
+ 		int paired = buf->undo->paired;
+-		undoStep(buf, 0);
++		if (undoStep(buf, 0) != 0)
++			return UNDO_MISMATCH;
+ 
+-		if (paired && doUndo(buf, 1) == UNDO_EXHAUSTED)
+-			return UNDO_EXHAUSTED;
++		if (paired) {
++			enum undoResult r = doUndo(buf, 1);
++			if (r != UNDO_DONE)
++				return r;
++		}
+ 	}
+ 	return UNDO_DONE;
+ }
+@@ -304,13 +346,16 @@ enum undoResult doRedo(struct buffer *buf, int count) {
+ 		 * record, carried through the rest of the group like any
+ 		 * other point. */
+ 		int px = buf->redo->startx, py = buf->redo->starty;
+-		undoStep(buf, 1);
++		if (undoStep(buf, 1) != 0)
++			return UNDO_MISMATCH;
+ 
+ 		while (buf->redo != NULL && buf->redo->paired) {
+ 			struct undo *n = buf->redo;
+-			adjustPoint(&px, &py, n->startx, n->starty, n->endx,
+-				    n->endy, n->delete);
+-			undoStep(buf, 1);
++			int nsx = n->startx, nsy = n->starty;
++			int nex = n->endx, ney = n->endy, ndel = n->delete;
++			if (undoStep(buf, 1) != 0)
++				return UNDO_MISMATCH;
++			adjustPoint(&px, &py, nsx, nsy, nex, ney, ndel);
+ 		}
+ 		buf->cx = px;
+ 		buf->cy = py;
+diff --git a/undo.h b/undo.h
+index d5b61f0..60f4f8a 100644
+--- a/undo.h
++++ b/undo.h
+@@ -15,6 +15,8 @@ enum undoResult {
+ 	UNDO_DONE,	/* every requested step was taken */
+ 	UNDO_EXHAUSTED, /* history ran out first */
+ 	UNDO_REFUSED,	/* read-only buffer, already reported */
++	UNDO_MISMATCH,	/* the next record doesn't match the text: not
++			 * applied, and reported */
+ };
+ 
+ enum undoResult doUndo(struct buffer *buf, int count);
+@@ -34,8 +36,19 @@ void undoCloseRun(struct buffer *buf);
+ 
+ void clearRedos(struct buffer *buf);
+ void clearUndosAndRedos(struct buffer *buf);
+-void bulkInsert(struct buffer *buf, int startx, int starty, const uint8_t *data,
+-		int datalen);
+-void bulkDelete(struct buffer *buf, int startx, int starty, int endx, int endy);
++
++/* Is (x, y) a position in the text?  A position may be at any byte of a
++ * row or just after its last. */
++int bufferPosValid(const struct buffer *buf, int x, int y);
++
++/* Are both ends positions in the text, with start not after end? */
++int bufferRangeValid(const struct buffer *buf, int startx, int starty, int endx,
++		     int endy);
++
++/* Change the rows and adjust points; neither records undo.  Both return
++ * 0, or -1 with nothing changed if the position or range is invalid. */
++int bulkInsert(struct buffer *buf, int startx, int starty, const uint8_t *data,
++	       int datalen);
++int bulkDelete(struct buffer *buf, int startx, int starty, int endx, int endy);
+ 
+ #endif

@@ -2,13 +2,14 @@
 
 ## Current state
 
-- **Milestone 5 done. The pilot is finished, within the owner's budget.** See `docs/verdict.md`.
-- Remote: `nicholascarroll/emil-proofs`, working branch `milestone-3`.
-- Pins: see `scripts/versions.env`. Generated C uses the pointer-free version.
+- Pilot finished: `docs/verdict.md`, branch `milestone-3`.
+- **Undo study, branch `undo-model`.** Stage 1 and 2 done: `docs/undo-stage1.md`, `docs/undo-stage2.md`.
+- Emil refactor: `patches/undo-refactor/` (7 commits on `ac98ba0b`). Pushing to emil is refused, so this is the only durable copy.
 
 ## Next step
 
-None planned. Don't go beyond Milestone 5. D2 and D4 are for the owner to act on.
+**Waiting for owner approval of statements in `docs/undo-statements.md`.** Don't prove before that. When proving: add `acl2/undo`
+to `STRICT_DIRS` in `scripts/certify.sh`, seed bugs, keep the ledger current. Then write the one page and stop.
 
 ## Reports
 

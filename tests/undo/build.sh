@@ -16,6 +16,7 @@ make -j2 CFLAGS="$SAN -fPIE ${EXTRA_CFLAGS:-}" LDFLAGS="-fsanitize=address,undef
   || { tail -20 make.log; exit 1; }
 api=""
 grep -q 'old_text' mutate.h && api="-DEMIL_OLD_API"
+grep -q 'enum mutateResult' mutate.h && api="$api -DEMIL_RESULT_API"
 objs=$(ls *.o | grep -vE '^(main|terminal)\.o$')
 cc -std=c99 -D_DEFAULT_SOURCE $SAN $api ${EXTRA_CFLAGS:-} -w -I. -Itests -c tests/stubs.c -o stubs.o.tmp
 cc -std=c99 -D_DEFAULT_SOURCE $SAN $api ${EXTRA_CFLAGS:-} -w -I. -Itests -x c "$here/driver.c" -x none $objs stubs.o.tmp \

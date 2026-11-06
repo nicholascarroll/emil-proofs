@@ -42,3 +42,18 @@ and writes, evidence is testing only." **`adjustPoint` itself isn't proven.**
 | 2026-11-06 | Pin recheck at the start of Milestone 3: pin kept. One later commit, `aba876cf`, has reader fixes for `#f`, `#u` and `#d` and an input-clearing fix. It isn't labelled a soundness fix and touches no ATC or C model files. | Whole project | Reported to owner |
 | 2026-11-06 | Spec change with no change in logic: guards added to `pos<=`, `in-int-p` and `adjust-no-overflow-p`, because a guard can only call guard-verified functions. | Spec | Reported to owner |
 | 2026-11-06 | Pin recheck before the verdict: pin kept. Still only `aba876cf` after the pin, with no soundness commits. | Whole project | Reported to owner |
+
+## Undo model (second study)
+
+Statements in `docs/undo-statements.md`, formal text in `acl2/undo/statements.lisp`.
+
+| Claim | Formal name | Evidence | Assumptions | Owner review |
+|---|---|---|---|---|
+| R. History matches text | `claim-r` | **Tested only** so far | See statements doc | Pending |
+| A. Undo all restores the original | `claim-a` | **Tested only** so far | Same | Pending |
+| B. Redo after undo restores the text | `claim-b` | **Tested only** so far | Same | Pending |
+| C. Coalesced undo equals separate undos | `claim-c` | **Tested only** so far | Same, plus the definition of a run | Pending |
+| The model behaves as emil's C | None | Tested: differential | Generator's reach | n/a |
+| Text changes only through the history | None | **Assumed, and false in U2 and U3** | | Pending |
+
+Spec decisions: invalid range refused; buffers with no rows out of scope; a run's first edit doesn't fold into an earlier record.

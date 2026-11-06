@@ -144,12 +144,18 @@ static uint8_t *old_text_of(const struct op *o, int *len) {
 static void execute(const struct op *o, int *r1, int *r2) {
 	*r1 = *r2 = -1;
 	E.input_burst = o->burst;
+#ifdef EMIL_RESULT_API
+	/* Out-params aren't an end position unless the edit went ahead. */
+#define MUT(call) do { if ((call) != MUTATE_DONE) *r1 = *r2 = -1; } while (0)
+#else
+#define MUT(call) (call)
+#endif
 	switch (o->kind) {
 	case K_INSCHAR:
-		mutateInsertChar(buf, o->sx, o->sy, o->data, o->len, r1, r2);
+		MUT(mutateInsertChar(buf, o->sx, o->sy, o->data, o->len, r1, r2));
 		break;
 	case K_INSERT:
-		mutateInsert(buf, o->sx, o->sy, o->data, o->len, r1, r2);
+		MUT(mutateInsert(buf, o->sx, o->sy, o->data, o->len, r1, r2));
 		break;
 #ifdef EMIL_OLD_API
 	case K_DELCHAR: {
@@ -179,8 +185,8 @@ static void execute(const struct op *o, int *r1, int *r2) {
 		mutateDelete(buf, o->sx, o->sy, o->ex, o->ey);
 		break;
 	case K_REPLACE:
-		mutateReplace(buf, o->sx, o->sy, o->ex, o->ey, o->data, o->len,
-			      o->flag, r1, r2);
+		MUT(mutateReplace(buf, o->sx, o->sy, o->ex, o->ey, o->data, o->len,
+				  o->flag, r1, r2));
 		break;
 #endif
 	case K_EXTEND:

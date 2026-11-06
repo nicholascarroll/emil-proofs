@@ -1,0 +1,122 @@
+From 560ad26394486bf87a189fea524ffdea59b3435c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 07:32:54 +1100
+Subject: [PATCH 1/7] Don't read past the row on a truncated UTF-8 sequence
+
+C-d and C-t computed a character's end from its lead byte alone, so a
+truncated sequence at the end of a row gave a range past the row.  C-d
+then recorded bytes from beyond the row (undo added a NUL; a 4-byte lead
+over-read the heap), and C-t passed a negative size to memcpy.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ edit.c                 |  6 ++++++
+ tests/test_transform.c |  8 ++++++++
+ tests/test_undo.c      | 21 +++++++++++++++++++++
+ transform.c            |  2 ++
+ 4 files changed, 37 insertions(+)
+
+diff --git a/edit.c b/edit.c
+index bd6fe99..a6f62e3 100644
+--- a/edit.c
++++ b/edit.c
+@@ -198,7 +198,11 @@ void delChar(int count) {
+ 			mutateDeleteChar(E.buf, E.buf->cx, E.buf->cy, 0,
+ 					 E.buf->cy + 1, &nl, 1);
+ 		} else {
++			/* A truncated sequence at the end of the row is only
++			 * as long as what's left of the row. */
+ 			int n = utf8_nBytes(row->chars[E.buf->cx]);
++			if (n > row->size - E.buf->cx)
++				n = row->size - E.buf->cx;
+ 			mutateDeleteChar(E.buf, E.buf->cx, E.buf->cy,
+ 					 E.buf->cx + n, E.buf->cy,
+ 					 &row->chars[E.buf->cx], n);
+@@ -500,6 +504,8 @@ void transposeChars(int uarg) {
+ 
+ 	/* Find the end of the character after point. */
+ 	int endx = E.buf->cx + utf8_nBytes(row->chars[E.buf->cx]);
++	if (endx > row->size)
++		endx = row->size; /* truncated sequence at the end of the row */
+ 
+ 	transformRange(E.buf, startx, E.buf->cy, endx, E.buf->cy,
+ 		       transformerTransposeChars);
+diff --git a/tests/test_transform.c b/tests/test_transform.c
+index 0c2a188..b7e2023 100644
+--- a/tests/test_transform.c
++++ b/tests/test_transform.c
+@@ -246,6 +246,13 @@ void test_transpose_words_two_words(void) {
+ 	free(r);
+ }
+ 
++/* The first character's lead byte claims more bytes than the input has. */
++void test_transpose_chars_truncated_lead(void) {
++	uint8_t *r = transformerTransposeChars((uint8_t *)"\xF0" "a");
++	TEST_ASSERT_EQUAL_STRING("\xF0" "a", (char *)r);
++	free(r);
++}
++
+ void test_transpose_chars_empty(void) {
+ 	uint8_t *r = transformerTransposeChars((uint8_t *)"");
+ 	TEST_ASSERT_EQUAL_STRING("", (char *)r);
+@@ -308,6 +315,7 @@ int main(void) {
+ 	RUN_TEST(test_transpose_words_single_word);
+ 	RUN_TEST(test_transpose_words_two_words);
+ 	RUN_TEST(test_transpose_chars_empty);
++	RUN_TEST(test_transpose_chars_truncated_lead);
+ 	RUN_TEST(test_transform_region_null_transformer);
+ 
+ 	return TEST_END();
+diff --git a/tests/test_undo.c b/tests/test_undo.c
+index bfd116b..c822ad5 100644
+--- a/tests/test_undo.c
++++ b/tests/test_undo.c
+@@ -11,6 +11,26 @@
+ #include "keymap.h"
+ #include <stdint.h>
+ 
++/* ---- Truncated UTF-8 at the end of a row ---- */
++
++/* C-d read and recorded bytes past the row, so undo added a NUL. */
++void test_undo_delchar_truncated_lead(void) {
++	const char *leads[] = { "a\xC3", "a\xE2", "a\xF0" };
++	for (int i = 0; i < 3; i++) {
++		const char *lines[] = { leads[i] };
++		struct buffer *buf = make_test_buffer_lines(lines, 1);
++		buf->cx = 1;
++		E.buf = buf;
++		delChar(1);
++		TEST_ASSERT_EQUAL_STRING("a", row_str(buf, 0));
++		doUndo(buf, 1);
++		TEST_ASSERT_EQUAL_STRING(leads[i], row_str(buf, 0));
++		TEST_ASSERT_EQUAL_INT((int)strlen(leads[i]), buf->row[0].size);
++		doRedo(buf, 1);
++		TEST_ASSERT_EQUAL_STRING("a", row_str(buf, 0));
++	}
++}
++
+ /* ---- Basic undo/redo ---- */
+ 
+ void test_undo_insert_chars(void) {
+@@ -943,6 +963,7 @@ void test_query_replace_U_offers_the_first_match_again(void) {
+ int main(void) {
+ 	TEST_BEGIN();
+ 
++	RUN_TEST(test_undo_delchar_truncated_lead);
+ 	RUN_TEST(test_undo_insert_chars);
+ 	RUN_TEST(test_undo_then_redo);
+ 	RUN_TEST(test_multiple_sequential_undos);
+diff --git a/transform.c b/transform.c
+index 4cd2277..335e226 100644
+--- a/transform.c
++++ b/transform.c
+@@ -198,6 +198,8 @@ uint8_t *transformerTransposeChars(uint8_t *input) {
+ 	}
+ 
+ 	int endFirst = utf8_nBytes(input[0]);
++	if (endFirst > len)
++		endFirst = len; /* truncated sequence */
+ 
+ 	memcpy(output, input + endFirst, len - endFirst);
+ 	memcpy(output + (len - endFirst), input, endFirst);

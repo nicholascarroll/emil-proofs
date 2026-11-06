@@ -1,0 +1,73 @@
+From 0ac84d2f9c0db9a86cc2bc87c5e42eac8f89a3b7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 08:10:03 +1100
+Subject: [PATCH 7/7] Stop word motion at the end of the row
+
+forwardWordEnd stepped by a lead byte's claimed length, so a word ending in a
+truncated UTF-8 sequence ended past the row.  bulkDelete used to clamp that
+away; M-u, M-c and M-t would now get MUTATE_INVALID.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ motion.c          |  2 ++
+ tests/test_undo.c | 19 +++++++++++++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/motion.c b/motion.c
+index d659273..90c208a 100644
+--- a/motion.c
++++ b/motion.c
+@@ -139,6 +139,8 @@ void forwardWordEnd(struct buffer *buf, int *dx, int *dy) {
+ 		while (cx < l) {
+ 			uint8_t c = buf->row[cy].chars[cx];
+ 			int nb = utf8_nBytes(c);
++			if (nb > l - cx)
++				nb = l - cx; /* truncated sequence */
+ 
+ 			/* Decode codepoint for CJK check */
+ 			if (c >= 0x80) {
+diff --git a/tests/test_undo.c b/tests/test_undo.c
+index 7987145..332ffa7 100644
+--- a/tests/test_undo.c
++++ b/tests/test_undo.c
+@@ -8,6 +8,8 @@
+ #include "edit.h"
+ #include "mutate.h"
+ #include "undo.h"
++#include "motion.h"
++#include "transform.h"
+ #include "keymap.h"
+ #include <stdint.h>
+ 
+@@ -67,6 +69,22 @@ void test_undo_record_reserve_keeps_data(void) {
+ 	undoRecordFreeList(u);
+ }
+ 
++/* forwardWordEnd stepped past the row over a truncated sequence, so M-u
++ * and friends asked to replace a range that doesn't exist. */
++void test_word_transform_truncated_lead(void) {
++	const char *lines[] = { "ab\xC3" };
++	struct buffer *buf = make_test_buffer_lines(lines, 1);
++	E.buf = buf;
++	int x = 0, y = 0;
++	forwardWordEnd(buf, &x, &y);
++	TEST_ASSERT_EQUAL_INT(3, x);
++	TEST_ASSERT_EQUAL_INT(0, y);
++	wordTransform(1, transformerUpcase);
++	TEST_ASSERT_EQUAL_STRING("AB\xC3", row_str(buf, 0));
++	doUndo(buf, 1);
++	TEST_ASSERT_EQUAL_STRING("ab\xC3", row_str(buf, 0));
++}
++
+ /* ---- Invalid ranges are refused ---- */
+ 
+ /* One record and one redo entry, so "nothing changed" means something. */
+@@ -1123,6 +1141,7 @@ int main(void) {
+ 	RUN_TEST(test_undo_record_new_copies_data);
+ 	RUN_TEST(test_undo_record_reserve_keeps_data);
+ 	RUN_TEST(test_undo_delchar_truncated_lead);
++	RUN_TEST(test_word_transform_truncated_lead);
+ 	RUN_TEST(test_mutate_refuses_invalid_ranges);
+ 	RUN_TEST(test_mutate_refuses_invalid_insert);
+ 	RUN_TEST(test_mutate_extend_refuses_wrong_row_count);

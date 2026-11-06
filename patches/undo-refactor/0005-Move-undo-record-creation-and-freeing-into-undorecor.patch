@@ -1,0 +1,707 @@
+From de1c12e317627a919b04436df8e4f0abc1ab0be4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 07:45:32 +1100
+Subject: [PATCH 5/7] Move undo record creation and freeing into undorecord.c
+
+Four hand-built records in mutate.c become undoRecordNew.  The record-construction
+invariant in run_tests.sh now names both constructors, and allows undorecord.c.
+No behaviour change.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ Makefile              |   6 +--
+ REUSE.toml            |   1 +
+ edit.c                |   3 +-
+ keymap.c              |   3 +-
+ mutate.c              | 117 +++++++++++++++---------------------------
+ mutate.h              |  25 +++++----
+ tests/run_tests.sh    |  14 ++---
+ tests/test_coalesce.c |   2 +-
+ tests/test_undo.c     |  29 +++++++++++
+ undo.c                |  73 +++-----------------------
+ undo.h                |   3 +-
+ undorecord.c          |  73 ++++++++++++++++++++++++++
+ undorecord.h          |  24 +++++++++
+ 13 files changed, 202 insertions(+), 171 deletions(-)
+ create mode 100644 undorecord.c
+ create mode 100644 undorecord.h
+
+diff --git a/Makefile b/Makefile
+index 7a03d17..7fb3cfe 100644
+--- a/Makefile
++++ b/Makefile
+@@ -29,8 +29,8 @@ DOCDIR  = $(PREFIX)/share/doc/emil
+ LICDIR  = $(PREFIX)/share/licenses/emil
+ 
+ # Source files
+-OBJECTS = main.o unicode.o decoder.o buffer.o region.o undo.o transform.o \
+-          backup.o \
++OBJECTS = main.o unicode.o decoder.o buffer.o region.o undo.o undorecord.o \
++          transform.o backup.o \
+           find.o pipe.o register.o fileio.o terminal.o display.o  \
+           keymap.o edit.o prompt.o util.o completion.o history.o base64.o \
+           abuf.o window.o ctags.o adjust.o mutate.o wrap.o motion.o dbuf.o \
+@@ -40,7 +40,7 @@ HEADERS = abuf.h adjust.h backup.h base64.h buffer.h completion.h ctags.h \
+           dbuf.h decoder.h display.h edit.h emil.h emil_subprocess.h \
+           fileio.h find.h history.h keymap.h message.h motion.h mutate.h \
+           palette.h pipe.h prompt.h region.h register.h terminal.h \
+-          transform.h undo.h unicode.h util.h window.h \
++          transform.h undo.h undorecord.h unicode.h util.h window.h \
+           wrap.h
+ 
+ # Default target
+diff --git a/REUSE.toml b/REUSE.toml
+index 95b5b7d..1dd1d29 100644
+--- a/REUSE.toml
++++ b/REUSE.toml
+@@ -34,6 +34,7 @@ path = [
+   "tests/test_shell.c",
+   "transform.c", "transform.h",
+   "undo.c", "undo.h",
++  "undorecord.c", "undorecord.h",
+   "unicode.c", "unicode.h",
+   "util.c",
+   "window.c",
+diff --git a/edit.c b/edit.c
+index 97214a2..e5a4ba9 100644
+--- a/edit.c
++++ b/edit.c
+@@ -233,8 +233,7 @@ void backSpace(int count) {
+ 			do {
+ 				from--;
+ 			} while (from > 0 && utf8_isCont(row->chars[from]));
+-			mutateDeleteChar(E.buf, from, E.buf->cy, to,
+-					 E.buf->cy);
++			mutateDeleteChar(E.buf, from, E.buf->cy, to, E.buf->cy);
+ 			E.buf->cx = from;
+ 		} else {
+ 			/* Joining onto the previous row deletes the
+diff --git a/keymap.c b/keymap.c
+index af448e7..151b568 100644
+--- a/keymap.c
++++ b/keymap.c
+@@ -862,8 +862,7 @@ static int dispatchBuffer(int c, int uarg) {
+ 		setStatusMessage(E.buf->read_only ? "Buffer is read-only" :
+ 						    "Buffer set to writable");
+ 		return 1;
+-	case CMD_REDO:
+-	{
++	case CMD_REDO: {
+ 		enum undoResult r = doRedo(E.buf, uarg);
+ 		reportUndo(r, "Redo.", "No further redo information.");
+ 		if (r != UNDO_MISMATCH && E.buf->redo != NULL) {
+diff --git a/mutate.c b/mutate.c
+index 5c7e997..f808fee 100644
+--- a/mutate.c
++++ b/mutate.c
+@@ -71,25 +71,19 @@ static void restoreFinalNewline(struct buffer *buf) {
+ 	int atx = buf->row[buf->numrows - 1].size;
+ 	int aty = buf->numrows - 1;
+ 
+-	struct undo *fix = newUndo();
+-	fix->startx = atx;
+-	fix->starty = aty;
+-	computeInsertEnd((const uint8_t *)"\n", 1, atx, aty, &fix->endx,
+-			 &fix->endy);
+-	fix->delete = 0;
+-	fix->append = 0;
++	const uint8_t nl = '\n';
++	int endx, endy;
++	computeInsertEnd(&nl, 1, atx, aty, &endx, &endy);
++	struct undo *fix = undoRecordNew(atx, aty, endx, endy, 0, &nl, 1);
+ 	fix->paired = 1;
+-	undoReplaceData(fix, 2);
+-	fix->data[0] = '\n';
+-	fix->data[1] = 0;
+-	fix->datalen = 1;
+ 	pushUndo(buf, fix);
+ 
+ 	bulkInsert(buf, atx, aty, (const uint8_t *)"\n", 1);
+ }
+ 
+ /* What a caller's "move to the end of the edit" gets when nothing changed. */
+-static void cursorAsEnd(const struct buffer *buf, int *out_endx, int *out_endy) {
++static void cursorAsEnd(const struct buffer *buf, int *out_endx,
++			int *out_endy) {
+ 	if (out_endx)
+ 		*out_endx = buf->cx;
+ 	if (out_endy)
+@@ -116,7 +110,8 @@ static enum mutateResult mutateReplaceEx(struct buffer *buf, int startx,
+ 
+ 	/* As above. */
+ 	if (wantsFinalNewline(buf) &&
+-	    deletesOnlyFinalNewline(buf, startx, starty, endx, endy, repl_len)) {
++	    deletesOnlyFinalNewline(buf, startx, starty, endx, endy,
++				    repl_len)) {
+ 		cursorAsEnd(buf, out_endx, out_endy);
+ 		return MUTATE_REFUSED;
+ 	}
+@@ -148,21 +143,13 @@ static enum mutateResult mutateReplaceEx(struct buffer *buf, int startx,
+ 
+ 	/* Delete undo record */
+ 	if (old_len > 0) {
+-		struct undo *del = newUndo();
+-		del->startx = startx;
+-		del->starty = starty;
+-		del->endx = endx;
+-		del->endy = endy;
+-		del->delete = 1;
++		struct undo *del = undoRecordNew(startx, starty, endx, endy, 1,
++						 old_text, old_len);
+ 		del->append = coalesce;
+ 		del->uncapped = coalesce && E.input_burst;
+ 		del->paired = chain_to_prev ? 1 : 0;
+ 		del->pointx = pointx;
+ 		del->pointy = pointy;
+-		undoReplaceData(del, old_len + 1);
+-		memcpy(del->data, old_text, old_len);
+-		del->data[old_len] = 0;
+-		del->datalen = old_len;
+ 		pushUndo(buf, del);
+ 	}
+ 
+@@ -178,26 +165,14 @@ static enum mutateResult mutateReplaceEx(struct buffer *buf, int startx,
+ 
+ 	/* Insert undo record */
+ 	if (repl_len > 0) {
+-		struct dbuf adata = DBUF_INIT;
+-		dbuf_append(&adata, repl, repl_len);
+-
+-		struct undo *ins = newUndo();
+-		ins->startx = startx;
+-		ins->starty = starty;
+-		computeInsertEnd(adata.buf, adata.len, startx, starty,
+-				 &ins->endx, &ins->endy);
+-		ins->delete = 0;
++		struct undo *ins = undoRecordNew(startx, starty, iex, iey, 0,
++						 repl, repl_len);
+ 		ins->append = coalesce;
+ 		ins->uncapped = coalesce && E.input_burst;
+ 		ins->paired = is_replace ? 1 : (chain_to_prev ? 1 : 0);
+ 		ins->pointx = pointx;
+ 		ins->pointy = pointy;
+-		undoReplaceData(ins, adata.len + 1);
+-		memcpy(ins->data, adata.buf, adata.len);
+-		ins->data[adata.len] = 0;
+-		ins->datalen = adata.len;
+ 		pushUndo(buf, ins);
+-		dbuf_free(&adata);
+ 
+ 		/* bulkInsert calls adjustAllPoints internally */
+ 		bulkInsert(buf, startx, starty, repl, repl_len);
+@@ -214,38 +189,42 @@ static enum mutateResult mutateReplaceEx(struct buffer *buf, int startx,
+ 	return MUTATE_DONE;
+ }
+ 
+-enum mutateResult mutateReplace(struct buffer *buf, int startx, int starty, int endx,
+-		   int endy, const uint8_t *repl, int repl_len,
+-		   int chain_to_prev, int *out_endx, int *out_endy) {
++enum mutateResult mutateReplace(struct buffer *buf, int startx, int starty,
++				int endx, int endy, const uint8_t *repl,
++				int repl_len, int chain_to_prev, int *out_endx,
++				int *out_endy) {
+ 	return mutateReplaceEx(buf, startx, starty, endx, endy, repl, repl_len,
+-			chain_to_prev, 0, out_endx, out_endy);
++			       chain_to_prev, 0, out_endx, out_endy);
+ }
+ 
+ enum mutateResult mutateInsertChar(struct buffer *buf, int startx, int starty,
+-		      const uint8_t *text, int len, int *out_endx,
+-		      int *out_endy) {
+-	return mutateReplaceEx(buf, startx, starty, startx, starty, text, len, 0, 1,
+-			out_endx, out_endy);
++				   const uint8_t *text, int len, int *out_endx,
++				   int *out_endy) {
++	return mutateReplaceEx(buf, startx, starty, startx, starty, text, len,
++			       0, 1, out_endx, out_endy);
+ }
+ 
+-enum mutateResult mutateDeleteChar(struct buffer *buf, int startx, int starty, int endx,
+-		      int endy) {
+-	return mutateReplaceEx(buf, startx, starty, endx, endy, NULL, 0, 0, 1, NULL,
+-			NULL);
++enum mutateResult mutateDeleteChar(struct buffer *buf, int startx, int starty,
++				   int endx, int endy) {
++	return mutateReplaceEx(buf, startx, starty, endx, endy, NULL, 0, 0, 1,
++			       NULL, NULL);
+ }
+ 
+-enum mutateResult mutateDelete(struct buffer *buf, int startx, int starty, int endx,
+-		  int endy) {
+-	return mutateReplace(buf, startx, starty, endx, endy, NULL, 0, 0, NULL, NULL);
++enum mutateResult mutateDelete(struct buffer *buf, int startx, int starty,
++			       int endx, int endy) {
++	return mutateReplace(buf, startx, starty, endx, endy, NULL, 0, 0, NULL,
++			     NULL);
+ }
+ 
+ enum mutateResult mutateInsert(struct buffer *buf, int startx, int starty,
+-		  const uint8_t *text, int len, int *out_endx, int *out_endy) {
++			       const uint8_t *text, int len, int *out_endx,
++			       int *out_endy) {
+ 	return mutateReplace(buf, startx, starty, startx, starty, text, len, 0,
+-		      out_endx, out_endy);
++			     out_endx, out_endy);
+ }
+ 
+-enum mutateResult mutateExtendRows(struct buffer *buf, int from_row, int n_rows) {
++enum mutateResult mutateExtendRows(struct buffer *buf, int from_row,
++				   int n_rows) {
+ 	if (rejectIfReadOnly(buf))
+ 		return MUTATE_REFUSED;
+ 
+@@ -265,30 +244,16 @@ enum mutateResult mutateExtendRows(struct buffer *buf, int from_row, int n_rows)
+ 
+ 	/* A pure-insert undo record of the appended newlines, heading a
+ 	 * chain that a following mutateReplace may pair onto. */
+-	struct undo *ext = newUndo();
+-	int n_newlines;
+-	if (from_row == 0) {
+-		/* A rowless buffer: anchor at the origin, n-1 newlines. */
+-		ext->starty = 0;
+-		ext->startx = 0;
+-		n_newlines = n_rows - 1;
+-	} else {
+-		ext->starty = from_row - 1;
+-		ext->startx = buf->row[ext->starty].size;
+-		n_newlines = n_rows;
+-	}
+-	ext->endx = 0;
+-	ext->endy = buf->numrows - 1;
+-	if (n_newlines + 1 > ext->datasize) {
+-		ext->datasize = n_newlines + 1;
+-		ext->data = xrealloc(ext->data, ext->datasize);
+-	}
++	int n_newlines = from_row == 0 ? n_rows - 1 : n_rows;
++	int anchory = from_row == 0 ? 0 : from_row - 1;
++	/* A rowless buffer anchors at the origin, with one newline fewer. */
++	int anchorx = from_row == 0 ? 0 : buf->row[anchory].size;
++	struct undo *ext = undoRecordNew(anchorx, anchory, 0, buf->numrows - 1,
++					 0, NULL, 0);
++	undoRecordReserve(ext, n_newlines);
+ 	memset(ext->data, '\n', n_newlines);
+ 	ext->data[n_newlines] = 0;
+ 	ext->datalen = n_newlines;
+-	ext->append = 0;
+-	ext->delete = 0;
+-	ext->paired = 0;
+ 	pushUndo(buf, ext);
+ 
+ 	adjustAllPoints(buf, ext->startx, ext->starty, ext->endx, ext->endy, 0);
+diff --git a/mutate.h b/mutate.h
+index 50b9c2b..16326ef 100644
+--- a/mutate.h
++++ b/mutate.h
+@@ -61,17 +61,19 @@ enum mutateResult {
+  *
+  * Returns the end position of the inserted text in *out_endx,
+  * *out_endy (may be NULL if caller doesn't need them). */
+-enum mutateResult mutateReplace(struct buffer *buf, int startx, int starty, int endx,
+-		   int endy, const uint8_t *repl, int repl_len,
+-		   int chain_to_prev, int *out_endx, int *out_endy);
++enum mutateResult mutateReplace(struct buffer *buf, int startx, int starty,
++				int endx, int endy, const uint8_t *repl,
++				int repl_len, int chain_to_prev, int *out_endx,
++				int *out_endy);
+ 
+ /* Convenience: pure delete. */
+-enum mutateResult mutateDelete(struct buffer *buf, int startx, int starty, int endx,
+-		  int endy);
++enum mutateResult mutateDelete(struct buffer *buf, int startx, int starty,
++			       int endx, int endy);
+ 
+ /* Convenience: pure insert. */
+ enum mutateResult mutateInsert(struct buffer *buf, int startx, int starty,
+-		  const uint8_t *text, int len, int *out_endx, int *out_endy);
++			       const uint8_t *text, int len, int *out_endx,
++			       int *out_endy);
+ 
+ /* Single interactive edits — one keystroke's worth.  Identical to
+  * mutateInsert / mutateDelete except that the record produced may be
+@@ -83,10 +85,10 @@ enum mutateResult mutateInsert(struct buffer *buf, int startx, int starty,
+  * mutateInsert / mutateDelete / mutateReplace, whose records always
+  * stand alone. */
+ enum mutateResult mutateInsertChar(struct buffer *buf, int startx, int starty,
+-		      const uint8_t *text, int len, int *out_endx,
+-		      int *out_endy);
+-enum mutateResult mutateDeleteChar(struct buffer *buf, int startx, int starty, int endx,
+-		      int endy);
++				   const uint8_t *text, int len, int *out_endx,
++				   int *out_endy);
++enum mutateResult mutateDeleteChar(struct buffer *buf, int startx, int starty,
++				   int endx, int endy);
+ 
+ /* Append 'n_rows' empty lines to the end of buf.  Records a single
+  * pure-insert undo with paired=0.  Used by yankRectangle to extend
+@@ -97,6 +99,7 @@ enum mutateResult mutateDeleteChar(struct buffer *buf, int startx, int starty, i
+  * 'from_row' is the row count before extension (buf->numrows at the
+  * time of the call); passed explicitly so the caller's pre-state is
+  * unambiguous.  Anything else is MUTATE_INVALID. */
+-enum mutateResult mutateExtendRows(struct buffer *buf, int from_row, int n_rows);
++enum mutateResult mutateExtendRows(struct buffer *buf, int from_row,
++				   int n_rows);
+ 
+ #endif
+diff --git a/tests/run_tests.sh b/tests/run_tests.sh
+index 7a5f153..dbcf73e 100755
+--- a/tests/run_tests.sh
++++ b/tests/run_tests.sh
+@@ -185,15 +185,15 @@ else
+     echo "✓ Mutation-layer invariant"
+ fi
+ 
+-# Record-construction invariant: mutate.c is the only place that
+-# builds undo records.  
+-RECORD_HITS=$(grep -nE '\bnewUndo\b' *.c 2>/dev/null \
++# Record-construction invariant: mutate.c is the only place that builds
++# undo records, using undorecord.c.
++RECORD_HITS=$(grep -nE '\b(newUndo|undoRecordNew)\b' *.c 2>/dev/null \
+     | grep -v '^mutate\.c:' \
+-    | grep -v '^undo\.c:[0-9]*:struct undo \*newUndo' \
++    | grep -v '^undorecord\.c:' \
+     | grep -vE ':[0-9]+:.*(/\*|//)' \
+     | grep -vE ':[0-9]+:[[:space:]]*\*')
+ if [ -n "$RECORD_HITS" ]; then
+-    echo "✗ Record-construction invariant violation (newUndo outside mutate.c):"
++    echo "✗ Record-construction invariant violation (records built outside mutate.c):"
+     echo "$RECORD_HITS" | sed 's/^/    /'
+     INVARIANT_FAIL=1
+ else
+@@ -239,7 +239,7 @@ fi
+ # answers from their arguments and must not reach into the global
+ # editor state. 
+ LEAF_OBJECTS="abuf.o backup.o base64.o dbuf.o decoder.o \
+-    emil_subprocess.o history.o transform.o undo.o unicode.o util.o \
++    emil_subprocess.o history.o transform.o undo.o undorecord.o unicode.o util.o \
+     wrap.o"
+ 
+ # Sanity check for nm: keymap.o is known to reference E.  If nm doesn't
+@@ -326,7 +326,7 @@ $CC $TEST_CFLAGS $SANITIZER_FLAGS -c tests/stubs.c -o tests/stubs.o 2>&1 || {
+ }
+ 
+ # All objects except main.o and terminal.o
+-TEST_OBJECTS="decoder.o unicode.o buffer.o region.o undo.o transform.o \
++TEST_OBJECTS="decoder.o unicode.o buffer.o region.o undo.o undorecord.o transform.o \
+     find.o pipe.o register.o fileio.o display.o  keymap.o \
+     edit.o prompt.o util.o completion.o history.o base64.o abuf.o \
+     window.o ctags.o adjust.o mutate.o wrap.o motion.o dbuf.o \
+diff --git a/tests/test_coalesce.c b/tests/test_coalesce.c
+index 049607f..2bafb24 100644
+--- a/tests/test_coalesce.c
++++ b/tests/test_coalesce.c
+@@ -557,7 +557,7 @@ void test_typing_is_capped_into_several_runs(void) {
+  *
+  * E.input_burst is what the drain loop sets when it finds bytes
+  * already waiting; the mutation layer copies it onto each record and
+- * undoMerge honours it.  Set directly here because the unit suites
++ * undoMergeDecision honours it.  Set directly here because the unit suites
+  * have no terminal -- the end-to-end path is covered by the pty
+  * scenarios. */
+ void test_burst_lifts_the_cap(void) {
+diff --git a/tests/test_undo.c b/tests/test_undo.c
+index 1079b5b..5806d0f 100644
+--- a/tests/test_undo.c
++++ b/tests/test_undo.c
+@@ -31,6 +31,33 @@ void test_undo_delchar_truncated_lead(void) {
+ 	}
+ }
+ 
++/* ---- Creating and freeing records ---- */
++
++void test_undo_record_new_copies_data(void) {
++	uint8_t text[] = { 'a', '\n', 'b' };
++	struct undo *u = undoRecordNew(1, 2, 1, 3, 1, text, 3);
++	text[0] = 'z';
++	TEST_ASSERT_EQUAL_INT(1, u->startx);
++	TEST_ASSERT_EQUAL_INT(2, u->starty);
++	TEST_ASSERT_EQUAL_INT(1, u->endx);
++	TEST_ASSERT_EQUAL_INT(3, u->endy);
++	TEST_ASSERT_EQUAL_INT(1, u->delete);
++	TEST_ASSERT_EQUAL_INT(3, u->datalen);
++	TEST_ASSERT_EQUAL_STRING("a\nb", (char *)u->data);
++	TEST_ASSERT_EQUAL_INT(-1, u->pointy);
++	TEST_ASSERT_EQUAL_INT(0, u->append);
++	TEST_ASSERT_EQUAL_INT(0, u->paired);
++	undoRecordFreeList(u);
++}
++
++void test_undo_record_reserve_keeps_data(void) {
++	struct undo *u = undoRecordNew(0, 0, 3, 0, 0, (const uint8_t *)"abc", 3);
++	undoRecordReserve(u, 1000);
++	TEST_ASSERT(u->datasize >= 1001);
++	TEST_ASSERT_EQUAL_STRING("abc", (char *)u->data);
++	undoRecordFreeList(u);
++}
++
+ /* ---- Invalid ranges are refused ---- */
+ 
+ /* One record and one redo entry, so "nothing changed" means something. */
+@@ -1083,6 +1110,8 @@ void test_query_replace_U_offers_the_first_match_again(void) {
+ int main(void) {
+ 	TEST_BEGIN();
+ 
++	RUN_TEST(test_undo_record_new_copies_data);
++	RUN_TEST(test_undo_record_reserve_keeps_data);
+ 	RUN_TEST(test_undo_delchar_truncated_lead);
+ 	RUN_TEST(test_mutate_refuses_invalid_ranges);
+ 	RUN_TEST(test_mutate_refuses_invalid_insert);
+diff --git a/undo.c b/undo.c
+index 6902d9b..b0aa307 100644
+--- a/undo.c
++++ b/undo.c
+@@ -363,59 +363,11 @@ enum undoResult doRedo(struct buffer *buf, int count) {
+ 	return UNDO_DONE;
+ }
+ 
+-struct undo *newUndo(void) {
+-	struct undo *ret = xmalloc(sizeof(*ret));
+-	ret->prev = NULL;
+-	ret->paired = 0;
+-	ret->startx = 0;
+-	ret->starty = 0;
+-	ret->endx = 0;
+-	ret->endy = 0;
+-	ret->append = 0; /* the mutation layer opts in; see pushUndo */
+-	ret->nmerges = 0;
+-	ret->uncapped = 0;
+-	ret->delete = 0;
+-	ret->pointx = 0;
+-	ret->pointy = -1; /* not recorded */
+-	ret->datalen = 0;
+-	ret->datasize = 22;
+-	ret->data = xmalloc(ret->datasize);
+-	ret->data[0] = 0;
+-	return ret;
+-}
+-
+-/* Replace an undo record's data buffer with a new allocation of
+- * 'newsize' bytes.  Callers must fill in the new data themselves
+- * after this returns. */
+-void undoReplaceData(struct undo *u, int newsize) {
+-	free(u->data);
+-	u->datasize = newsize;
+-	u->data = xmalloc(u->datasize);
+-}
+-
+ #define ALIGNED(x1, y1, x2, y2) ((x1 == x2) && (y1 == y2))
+ 
+ /* Maximum number of operations folded into one record.*/
+ #define UNDO_MERGE_LIMIT 20
+ 
+-/* Grow u->data to hold at least 'needed' bytes plus a NUL. */
+-static void undoEnsureData(struct undo *u, int needed) {
+-	if (needed < 0 || needed == INT_MAX)
+-		abort();
+-	if (needed + 1 <= u->datasize)
+-		return;
+-	int newsize = u->datasize ? u->datasize : 22;
+-	while (newsize < needed + 1) {
+-		if (newsize > INT_MAX / 2) {
+-			newsize = needed + 1;
+-			break;
+-		}
+-		newsize *= 2;
+-	}
+-	u->data = xrealloc(u->data, newsize);
+-	u->datasize = newsize;
+-}
+-
+ /* Would 'new' fold into 'prev', and at which end?  Pure.
+  *
+  * Only these three shapes join:
+@@ -443,7 +395,8 @@ enum undoMergeShape undoMergeDecision(const struct undo *prev,
+ 		return UNDO_MERGE_NONE;
+ 
+ 	if (!new->delete)
+-		return ALIGNED(prev->endx, prev->endy, new->startx, new->starty) ?
++		return ALIGNED(prev->endx, prev->endy, new->startx,
++			       new->starty) ?
+ 			       UNDO_MERGE_APPEND :
+ 			       UNDO_MERGE_NONE;
+ 	if (ALIGNED(prev->startx, prev->starty, new->startx, new->starty))
+@@ -460,7 +413,7 @@ enum undoMergeShape undoMergeDecision(const struct undo *prev,
+  */
+ static void undoMergeApply(struct undo *prev, const struct undo *new,
+ 			   enum undoMergeShape shape) {
+-	undoEnsureData(prev, prev->datalen + new->datalen);
++	undoRecordReserve(prev, prev->datalen + new->datalen);
+ 	if (shape == UNDO_MERGE_PREPEND) {
+ 		memmove(&prev->data[new->datalen], prev->data, prev->datalen);
+ 		memcpy(prev->data, new->data, new->datalen);
+@@ -478,8 +431,6 @@ static void undoMergeApply(struct undo *prev, const struct undo *new,
+ 			 &prev->endx, &prev->endy);
+ }
+ 
+-static void freeUndos(struct undo *first);
+-
+ /* Add a record to the undo list, taking ownership.*/
+ void pushUndo(struct buffer *buf, struct undo *new) {
+ 	if (new->append) {
+@@ -487,7 +438,7 @@ void pushUndo(struct buffer *buf, struct undo *new) {
+ 		if (shape != UNDO_MERGE_NONE) {
+ 			undoMergeApply(buf->undo, new, shape);
+ 			new->prev = NULL;
+-			freeUndos(new);
++			undoRecordFreeList(new);
+ 			return;
+ 		}
+ 	}
+@@ -503,25 +454,13 @@ void undoCloseRun(struct buffer *buf) {
+ 		buf->undo->append = 0;
+ }
+ 
+-static void freeUndos(struct undo *first) {
+-	struct undo *cur = first;
+-	struct undo *prev;
+-
+-	while (cur != NULL) {
+-		free(cur->data);
+-		prev = cur;
+-		cur = prev->prev;
+-		free(prev);
+-	}
+-}
+-
+ void clearRedos(struct buffer *buf) {
+-	freeUndos(buf->redo);
++	undoRecordFreeList(buf->redo);
+ 	buf->redo = NULL;
+ }
+ 
+ void clearUndosAndRedos(struct buffer *buf) {
+-	freeUndos(buf->undo);
++	undoRecordFreeList(buf->undo);
+ 	buf->undo = NULL;
+ 	clearRedos(buf);
+ }
+diff --git a/undo.h b/undo.h
+index 01f97e9..bf13fff 100644
+--- a/undo.h
++++ b/undo.h
+@@ -5,6 +5,7 @@
+ 
+ #include "dbuf.h"
+ #include "emil.h"
++#include "undorecord.h"
+ 
+ /* Compute the position reached after inserting 'len' bytes of 'text'
+  * starting at (startx, starty).  Pure. */
+@@ -21,8 +22,6 @@ enum undoResult {
+ 
+ enum undoResult doUndo(struct buffer *buf, int count);
+ enum undoResult doRedo(struct buffer *buf, int count);
+-struct undo *newUndo(void);
+-void undoReplaceData(struct undo *u, int newsize);
+ 
+ enum undoMergeShape {
+ 	UNDO_MERGE_NONE,
+diff --git a/undorecord.c b/undorecord.c
+new file mode 100644
+index 0000000..1ec3826
+--- /dev/null
++++ b/undorecord.c
+@@ -0,0 +1,73 @@
++/* Copyright (c) 2021 chameleon, 2026 Nicholas Carroll.
++ * SPDX-License-Identifier: MIT */
++#include "undorecord.h"
++#include "util.h"
++#include <limits.h>
++#include <stdlib.h>
++#include <string.h>
++
++struct undo *newUndo(void) {
++	struct undo *ret = xmalloc(sizeof(*ret));
++	ret->prev = NULL;
++	ret->paired = 0;
++	ret->startx = 0;
++	ret->starty = 0;
++	ret->endx = 0;
++	ret->endy = 0;
++	ret->append = 0; /* the mutation layer opts in; see pushUndo */
++	ret->nmerges = 0;
++	ret->uncapped = 0;
++	ret->delete = 0;
++	ret->pointx = 0;
++	ret->pointy = -1; /* not recorded */
++	ret->datalen = 0;
++	ret->datasize = 22;
++	ret->data = xmalloc(ret->datasize);
++	ret->data[0] = 0;
++	return ret;
++}
++
++struct undo *undoRecordNew(int startx, int starty, int endx, int endy,
++			   int is_delete, const uint8_t *data, int datalen) {
++	struct undo *u = newUndo();
++	u->startx = startx;
++	u->starty = starty;
++	u->endx = endx;
++	u->endy = endy;
++	u->delete = is_delete;
++	undoRecordReserve(u, datalen);
++	if (datalen > 0)
++		memcpy(u->data, data, datalen);
++	u->data[datalen] = 0;
++	u->datalen = datalen;
++	return u;
++}
++
++void undoRecordReserve(struct undo *u, int needed) {
++	if (needed < 0 || needed == INT_MAX)
++		abort();
++	if (needed + 1 <= u->datasize)
++		return;
++	int newsize = u->datasize ? u->datasize : 22;
++	while (newsize < needed + 1) {
++		if (newsize > INT_MAX / 2) {
++			newsize = needed + 1;
++			break;
++		}
++		newsize *= 2;
++	}
++	u->data = xrealloc(u->data, newsize);
++	u->datasize = newsize;
++}
++
++void undoRecordFreeList(struct undo *first) {
++	struct undo *cur = first;
++	struct undo *prev;
++
++	while (cur != NULL) {
++		free(cur->data);
++		prev = cur;
++		cur = prev->prev;
++		free(prev);
++	}
++}
+diff --git a/undorecord.h b/undorecord.h
+new file mode 100644
+index 0000000..d9e7c6e
+--- /dev/null
++++ b/undorecord.h
+@@ -0,0 +1,24 @@
++/* Copyright (c) 2026 Nicholas Carroll. SPDX-License-Identifier: MIT */
++#ifndef EMIL_UNDORECORD_H
++#define EMIL_UNDORECORD_H 1
++
++#include "emil.h"
++#include <stdint.h>
++
++/* Creating and freeing undo records.  A record owns its data; linking it
++ * into a list is pushUndo's job. */
++
++/* A record with no data and every flag clear, and the point not recorded. */
++struct undo *newUndo(void);
++
++/* A record of a change to [start, end] whose text is a copy of 'data'. */
++struct undo *undoRecordNew(int startx, int starty, int endx, int endy,
++			   int is_delete, const uint8_t *data, int datalen);
++
++/* Grow u->data to hold at least 'needed' bytes plus a NUL. */
++void undoRecordReserve(struct undo *u, int needed);
++
++/* Free a record and every record reached through its 'prev'. */
++void undoRecordFreeList(struct undo *first);
++
++#endif
