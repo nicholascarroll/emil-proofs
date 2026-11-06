@@ -526,3 +526,108 @@
            :in-theory (e/d (clean-p) (hist-ok hist-val initial-st run-ops initial-ok run-ops-ok))
            :use (initial-ok (:instance run-ops-ok (st (initial-st tx wants-nl))))
            :expand ((hist-ok (run-ops (initial-st tx wants-nl) ops))))))
+
+;; ---------- Read-only and wants-nl don't change in these sequences ----------
+
+(defthm step-flags
+  (and (equal (access edst (undo-step st) :read-only) (access edst st :read-only))
+       (equal (access edst (undo-step st) :wants-nl) (access edst st :wants-nl))
+       (equal (access edst (redo-step st) :read-only) (access edst st :read-only))
+       (equal (access edst (redo-step st) :wants-nl) (access edst st :wants-nl)))
+  :hints (("Goal" :in-theory (enable undo-step redo-step))))
+
+(defthm undo-group-flags
+  (and (equal (access edst (mv-nth 1 (undo-group st)) :read-only) (access edst st :read-only))
+       (equal (access edst (mv-nth 1 (undo-group st)) :wants-nl) (access edst st :wants-nl)))
+  :hints (("Goal" :induct (undo-group st))))
+
+(defthm redo-rest-flags
+  (and (equal (access edst (redo-rest st px py) :read-only) (access edst st :read-only))
+       (equal (access edst (redo-rest st px py) :wants-nl) (access edst st :wants-nl)))
+  :hints (("Goal" :induct (redo-rest st px py) :in-theory (disable adjust-spec))))
+
+(defthm redo-group-flags
+  (and (equal (access edst (redo-group st) :read-only) (access edst st :read-only))
+       (equal (access edst (redo-group st) :wants-nl) (access edst st :wants-nl)))
+  :hints (("Goal" :in-theory (disable redo-rest))))
+
+(defthm undo-times-flags
+  (and (equal (access edst (mv-nth 1 (undo-times st n)) :read-only) (access edst st :read-only))
+       (equal (access edst (mv-nth 1 (undo-times st n)) :wants-nl) (access edst st :wants-nl)))
+  :hints (("Goal" :induct (undo-times st n) :in-theory (disable undo-group))))
+
+(defthm redo-times-flags
+  (and (equal (access edst (mv-nth 1 (redo-times st n)) :read-only) (access edst st :read-only))
+       (equal (access edst (mv-nth 1 (redo-times st n)) :wants-nl) (access edst st :wants-nl)))
+  :hints (("Goal" :induct (redo-times st n) :in-theory (disable redo-group))))
+
+(defthm edit-flags
+  (and (equal (access edst (edit st sx sy ex ey repl chain coalesce burst) :read-only)
+              (access edst st :read-only))
+       (equal (access edst (edit st sx sy ex ey repl chain coalesce burst) :wants-nl)
+              (access edst st :wants-nl)))
+  :hints (("Goal" :in-theory (e/d (edit-is-core) (repair-final-nl)))))
+
+(defthm run-op-flags
+  (and (equal (access edst (run-op st op) :read-only) (access edst st :read-only))
+       (equal (access edst (run-op st op) :wants-nl) (access edst st :wants-nl)))
+  :hints (("Goal" :in-theory (disable edit undo-times redo-times))))
+
+(defthm run-ops-flags
+  (and (equal (access edst (run-ops st ops) :read-only) (access edst st :read-only))
+       (equal (access edst (run-ops st ops) :wants-nl) (access edst st :wants-nl)))
+  :hints (("Goal" :induct (run-ops st ops) :in-theory (disable run-op))))
+
+;; ---------- Claim A ----------
+
+(defthm len-close-run
+  (equal (len (close-run u)) (len u))
+  :hints (("Goal" :in-theory (enable close-run))))
+
+(defthm undo-group-shrinks
+  (implies (consp (access edst st :undo))
+           (< (len (access edst (mv-nth 1 (undo-group st)) :undo))
+              (len (access edst st :undo))))
+  :hints (("Goal" :induct (undo-group st)))
+  :rule-classes :linear)
+
+(defthm undo-group-exhausted
+  (implies (mv-nth 0 (undo-group st))
+           (not (consp (access edst (mv-nth 1 (undo-group st)) :undo))))
+  :hints (("Goal" :induct (undo-group st))))
+
+(defthm undo-times-empties
+  (implies (and (natp n) (< (len (access edst st :undo)) n))
+           (not (consp (access edst (mv-nth 1 (undo-times st n)) :undo))))
+  :hints (("Goal" :induct (undo-times st n) :in-theory (disable undo-group))
+          ("Subgoal *1/4" :use undo-group-shrinks)))
+
+(defthm hist-val-empty
+  (implies (not (consp (access edst st :undo)))
+           (equal (hist-val st) (access edst st :text))))
+
+;; (initial-st) isn't read-only.
+(defthm initial-flags
+  (and (not (access edst (initial-st tx w) :read-only))
+       (equal (access edst (initial-st tx w) :wants-nl) w)))
+
+(defthm undo-all-empties
+  (implies (not (access edst st :read-only))
+           (not (consp (access edst (mv-nth 1 (do-undo st (+ 1 (len (access edst st :undo))))) :undo))))
+  :hints (("Goal" :do-not-induct t :in-theory (disable undo-times))))
+
+;; CLAIM A: undoing everything restores the starting text.
+(defthm claim-a-holds
+  (claim-a tx wants-nl ops)
+  :hints (("Goal" :do-not-induct t
+           :in-theory (e/d () (hist-ok hist-val initial-st run-ops initial-ok run-ops-ok undo-times
+                               hist-val-empty do-undo-ok do-undo undo-all-empties))
+           :use (initial-ok
+                 (:instance run-ops-ok (st (initial-st tx wants-nl)))
+                 (:instance undo-all-empties (st (run-ops (initial-st tx wants-nl) ops)))
+                 (:instance do-undo-ok
+                            (st (run-ops (initial-st tx wants-nl) ops))
+                            (c (+ 1 (len (access edst (run-ops (initial-st tx wants-nl) ops) :undo)))))
+                 (:instance hist-val-empty
+                            (st (mv-nth 1 (do-undo (run-ops (initial-st tx wants-nl) ops)
+                                                   (+ 1 (len (access edst (run-ops (initial-st tx wants-nl) ops) :undo)))))))))))
