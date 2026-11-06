@@ -89,3 +89,18 @@ Also: `make hal` reformatted `display.c`, which I reverted. It's not in the bran
 - **U2:** `insertChar` in prompts makes no record. Clearing or recording would close it.
 - **U3:** `bufferResetRows` keeps history. Clearing it there would close it.
 - `edit.c` cursor moves after C-t and arrow keys on truncated sequences can still go past the row, until `clampPositions`.
+
+## After the proofs
+
+Owner's decisions: keep the replay check and the C-t fix. The stuck state is a known limitation. U2 and U3 are fixed in separate commits, and neither needed a model change.
+
+- **U2 (`0b091b6`):** TAB and `/` in a prompt use `selfInsert`. `insertChar` is gone.
+- **U3 (`b0638c8`):** `mutateRebuildBegin` and `End` replace `bufferResetRows` at the six special-buffer sites. With no history, nothing changes. With history, the rebuild is a normal `mutateReplace`. Effect: such a buffer can gain a final empty row.
+- **Regex replace (`1e5f0c3`):** tests drive the prompts and walk the whole history. A seeded range bug at that call fails them.
+- **Sanitizers:** my new tests first failed under LeakSanitizer by initialising the editor twice. Fixed in `415c942`. Sanitizers were not rerun between `1e5f0c3` and that fix.
+
+**All 13 earlier refcheck seeds** (75, 164, 306, 349, 753, 960, 1235, 1266, 1537, 1771, 1800, 1844, 1905) are U2. In each, a logging build shows exactly one replay refusal, in the minibuffer, after an unrecorded `insertChar` on that minibuffer. The last logged event before the refusal is that `insertChar`, except seed 960, where an unrelated special-buffer rebuild falls between them.
+
+**Key fuzz at `415c942`, 3,000 seeds with truncated UTF-8 lines added:** 0 history mismatches, 0 replay refusals, 0 invalid ranges in any buffer. 11 failures: 10 newline-in-row (assumption 5), and 1127 (D4). Assumption 2 holds for U2 and U3 in this test. Other unrecorded paths could exist that the fuzz doesn't reach.
+
+**Refcheck at `415c942`:** see `docs/undo-report.md`. 24 findings: 5 divergence groups, 9 unminimised groups (listed as incomplete), footprint changes from the rebuild helper and status messages, comments still naming `insertChar`, and changed lines no test runs.

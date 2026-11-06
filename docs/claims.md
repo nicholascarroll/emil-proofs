@@ -45,15 +45,18 @@ and writes, evidence is testing only." **`adjustPoint` itself isn't proven.**
 
 ## Undo model (second study)
 
-Statements in `docs/undo-statements.md`, formal text in `acl2/undo/statements.lisp`.
+Statements in `docs/undo-statements.md`, formal text in `acl2/undo/statements.lisp`. One page: `docs/undo-report.md`.
+**Assumption 2 is currently false in U2 and U3 on `main`.** They're fixed on the patched branch, as tested, not proved.
 
 | Claim | Formal name | Evidence | Assumptions | Owner review |
 |---|---|---|---|---|
-| R. History matches text | `claim-r` | **Tested only** so far | See statements doc | Pending |
-| A. Undo all restores the original | `claim-a` | **Tested only** so far | Same | Pending |
-| B. Redo after undo restores the text | `claim-b` | **Tested only** so far | Same | Pending |
-| C. Coalesced undo equals separate undos | `claim-c` | **Tested only** so far | Same, plus the definition of a run | Pending |
-| The model behaves as emil's C | None | Tested: differential | Generator's reach | n/a |
-| Text changes only through the history | None | **Assumed, and false in U2 and U3** | | Pending |
+| R. History matches text | `claim-r-holds` (`history.lisp`) | **Proved** on the model | 2 to 7 in the statements doc | Approved |
+| A. Undo all restores the original | `claim-a-holds` (`history.lisp`) | **Proved** on the model | Same | Approved |
+| B. Redo after undo restores the text | `claim-b-holds` (`redo.lisp`) | **Proved** on the model | Same | Approved |
+| C. Coalesced undo equals separate undos | `claim-c-holds` (`coalesce.lisp`) | **Proved** on the model | Same, plus the definition of a run | Approved |
+| The model behaves as emil's C | None | Tested: differential, 3.1M steps | Generator's reach | n/a |
+| Text changes only through the history | None | **Assumed. False in U2 and U3 on `main`;** tested on the branch | | Accepted by owner |
+| At least one row, no newline byte in a row | None | **Assumed. False in one case:** filename with a newline in `*Output*` | | **New: for owner** |
 
 Spec decisions: invalid range refused; buffers with no rows out of scope; a run's first edit doesn't fold into an earlier record.
+Known limitation: a record that doesn't match the text makes undo refuse and stay stuck at it until the history is cleared.

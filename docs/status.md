@@ -3,13 +3,12 @@
 ## Current state
 
 - Pilot finished: `docs/verdict.md`, branch `milestone-3`.
-- **Undo study, branch `undo-model`.** Stage 1 and 2 done: `docs/undo-stage1.md`, `docs/undo-stage2.md`.
-- Emil refactor: `patches/undo-refactor/` (7 commits on `ac98ba0b`). Pushing to emil is refused, so this is the only durable copy.
+- **Undo study finished, branch `undo-model`.** One page: `docs/undo-report.md`. Stages: `docs/undo-stage1.md`, `docs/undo-stage2.md`, `docs/undo-statements.md`.
+- Emil refactor: `patches/undo-refactor/`, 11 commits on `ac98ba0b`. The owner applies them; Claude has no push rights to emil.
 
 ## Next step
 
-**Waiting for owner approval of statements in `docs/undo-statements.md`.** Don't prove before that. When proving: add `acl2/undo`
-to `STRICT_DIRS` in `scripts/certify.sh`, seed bugs, keep the ledger current. Then write the one page and stop.
+None planned. Owner decides on the newline-in-row case.
 
 ## Reports
 
@@ -37,3 +36,7 @@ to `STRICT_DIRS` in `scripts/certify.sh`, seed bugs, keep the ledger current. Th
 | M3 | C functions to spec | 7m |
 | M3 | Seeded bugs | 5m53s |
 | M4 | Full comparison | 49s |
+| Undo | Differential, all classes | About 2m |
+| Undo | R, A, B, C proved | About 30m, about 45 certification runs, no stall |
+| Undo | Full `certify.sh` including `acl2/undo` | 10m52s |
+| Undo | Refcheck | 13m |

@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
 		doUndo(b, 1);
 		show("undo  ", b);
 	} else if (!strcmp(c, "minibuf-tab")) {
-		/* prompt.c:356: TAB in a prompt inserts without a record */
+		/* prompt.c:356 before the U2 fix */
 		struct buffer *b = make_test_buffer("");
 		bufferEnsureRow(b);
 		E.minibuf = b;
@@ -63,7 +63,9 @@ int main(int argc, char **argv) {
 		mutateInsert(b, 0, 0, (const uint8_t *)"ab", 2, &ex, &ey);
 		b->cx = 0; b->cy = 0;
 		show("typed ", b);
-		insertChar(b, '\t', 1);
+		/* What insertChar did before the U2 fix: a change with no record. */
+		rowInsertChar(b, &b->row[0], 0, '\t');
+		b->cx = 1;
 		show("TAB   ", b);
 		doUndo(b, 1);
 		show("undo  ", b);
