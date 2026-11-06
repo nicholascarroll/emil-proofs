@@ -1,0 +1,223 @@
+From 7068e5e7c543d8448d7f688662b26e0a260a0b5a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 14:57:15 +1100
+Subject: [PATCH 2/4] Keep the *Tags* menu's rows valid UTF-8
+
+A tags file is outside text, and its file, scope and pattern fields went into
+rows as they were, against the rule that every buffer holds valid UTF-8.  Each
+field now goes through utf8SanitizeLine.  A tab stays a tab, as definition lines
+often hold one.  Choosing a row still uses the parsed entry, so a bad name is
+refused by the file path rule, not by what the row shows.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ ctags.c            | 50 ++++++++++++++++++++++++++-----
+ ctags.h            |  7 +++++
+ tests/test_ctags.c | 75 ++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 124 insertions(+), 8 deletions(-)
+
+diff --git a/ctags.c b/ctags.c
+index 1627d69..d38f01c 100644
+--- a/ctags.c
++++ b/ctags.c
+@@ -408,14 +408,49 @@ static int collectMatches(const char *sym, struct tagMatch **out) {
+ 
+ /* One row: the scope padded to a column, the file and line, then the
+  * definition's own text.*/
+-static void menuRow(struct dbuf *d, const struct tagMatch *m, int scope_cols) {
++/* A tags file is outside text, so a field can hold bytes a row must not.
++ * Each comes back as utf8SanitizeLine leaves it, except that a tab stays
++ * a tab: definition lines often hold one.  Caller frees. */
++static char *menuField(const char *s) {
++	size_t cap = strlen(s) * 3 + 1, o = 0;
++	char *out = xmalloc(cap);
++	out[0] = '\0';
++	while (*s) {
++		size_t n = strcspn(s, "\t");
++		utf8SanitizeLine((const uint8_t *)s, n, out + o, cap - o);
++		o += strlen(out + o);
++		s += n;
++		if (*s == '\t') {
++			out[o++] = '\t';
++			out[o] = '\0';
++			s++;
++		}
++	}
++	return out;
++}
++
++/* The width a scope takes in the menu. */
++static int menuScopeWidth(const char *scope) {
++	char *s = menuField(scope);
++	int w = stringWidth((const uint8_t *)s);
++	free(s);
++	return w;
++}
++
++static void appendMenuField(struct dbuf *d, const char *field) {
++	char *s = menuField(field);
++	dbuf_append(d, (const uint8_t *)s, (int)strlen(s));
++	free(s);
++}
++
++void ctagsMenuRow(struct dbuf *d, const struct tagMatch *m, int scope_cols) {
+ 	if (scope_cols > 0) {
+ 		const char *s = m->scope ? m->scope : "";
+-		dbuf_append(d, (const uint8_t *)s, (int)strlen(s));
+-		dbuf_pad(d, ' ', scope_cols - stringWidth((const uint8_t *)s));
++		appendMenuField(d, s);
++		dbuf_pad(d, ' ', scope_cols - menuScopeWidth(s));
+ 		dbuf_append(d, (const uint8_t *)"  ", 2);
+ 	}
+-	dbuf_append(d, (const uint8_t *)m->file, (int)strlen(m->file));
++	appendMenuField(d, m->file);
+ 	if (m->line > 0) {
+ 		char num[16];
+ 		int len = snprintf(num, sizeof(num), ":%d", m->line);
+@@ -426,7 +461,7 @@ static void menuRow(struct dbuf *d, const struct tagMatch *m, int scope_cols) {
+ 		def++;
+ 	if (*def) {
+ 		dbuf_append(d, (const uint8_t *)"  ", 2);
+-		dbuf_append(d, (const uint8_t *)def, (int)strlen(def));
++		appendMenuField(d, def);
+ 	}
+ }
+ 
+@@ -436,8 +471,7 @@ static void menuRow(struct dbuf *d, const struct tagMatch *m, int scope_cols) {
+ static int pickMatch(const char *sym, const struct tagMatch *v, int n) {
+ 	int scope_cols = 0;
+ 	for (int i = 0; i < n; i++) {
+-		int w = v[i].scope ? stringWidth((const uint8_t *)v[i].scope) :
+-				     0;
++		int w = v[i].scope ? menuScopeWidth(v[i].scope) : 0;
+ 		if (w > scope_cols)
+ 			scope_cols = w;
+ 	}
+@@ -449,7 +483,7 @@ static int pickMatch(const char *sym, const struct tagMatch *v, int n) {
+ 	for (int i = 0; i < n; i++) {
+ 		struct dbuf d = DBUF_INIT;
+ 		int len;
+-		menuRow(&d, &v[i], scope_cols);
++		ctagsMenuRow(&d, &v[i], scope_cols);
+ 		uint8_t *row = dbuf_detach(&d, &len);
+ 		insertRow(pb, i, row, (size_t)len);
+ 		free(row);
+diff --git a/ctags.h b/ctags.h
+index f58cb7b..158ab09 100644
+--- a/ctags.h
++++ b/ctags.h
+@@ -48,6 +48,13 @@ struct tagMatch {
+  * NULL.  Returns -1 for any other line.  Exposed for testing. */
+ int ctagsParseLine(char *line, const char *sym, struct tagMatch *m);
+ 
++/* Append m's row of the definitions menu to d, as text a row can hold:
++ * the fields come from the tags file and may not be valid UTF-8.
++ * scope_cols is the scope column's width, 0 for none.  Exposed for
++ * testing. */
++struct dbuf;
++void ctagsMenuRow(struct dbuf *d, const struct tagMatch *m, int scope_cols);
++
+ /* The word at point for a tags lookup, or NULL if there is none: a run
+  * of ASCII identifier characters and non-ASCII letters, ended by
+  * anything else -- including punctuation and U+200B ZERO WIDTH SPACE,
+diff --git a/tests/test_ctags.c b/tests/test_ctags.c
+index a23e523..9d29d33 100644
+--- a/tests/test_ctags.c
++++ b/tests/test_ctags.c
+@@ -6,6 +6,8 @@
+ #include "test.h"
+ #include "test_harness.h"
+ #include "ctags.h"
++#include "unicode.h"
++#include "dbuf.h"
+ #include "fileio.h"
+ #include "keymap.h"
+ #include "util.h" /* emil_strlcpy prototype — without it the call at
+@@ -912,6 +914,74 @@ void test_menu_lists_current_file_first(void) {
+ 	leave_menu_project();
+ }
+ 
++/* ---- a menu row holds what a row may hold ---- */
++
++static char *menu_row(const struct tagMatch *m, int scope_cols) {
++	struct dbuf d = DBUF_INIT;
++	ctagsMenuRow(&d, m, scope_cols);
++	int len;
++	uint8_t *row = dbuf_detach(&d, &len);
++	TEST_ASSERT_TRUE(utf8_validate(row, len));
++	return (char *)row;
++}
++
++void test_menu_row_replaces_invalid_bytes_in_every_field(void) {
++	struct tagMatch m = { "qq\xffy.c", "unused", "int\xc3", "Cl\xf0", 3 };
++	char *row = menu_row(&m, 6);
++	/* Cl + one replacement character is 3 wide: 3 of padding, then 2. */
++	TEST_ASSERT_EQUAL_STRING("Cl\xef\xbf\xbd   "
++				 "  qq\xef\xbf\xbdy.c:3  int\xef\xbf\xbd",
++				 row);
++	free(row);
++}
++
++void test_menu_row_keeps_valid_text_and_tabs(void) {
++	struct tagMatch m = { "\xe6\x97\xa5.c", "unused",
++			      "\t int\tfoo\xc3\xa9", NULL, 0 };
++	char *row = menu_row(&m, 0);
++	TEST_ASSERT_EQUAL_STRING("\xe6\x97\xa5.c  int\tfoo\xc3\xa9", row);
++	free(row);
++}
++
++void test_menu_row_shows_control_byte_as_caret(void) {
++	struct tagMatch m = { "a\x01.c", "unused", "x\x7f", NULL, 2 };
++	char *row = menu_row(&m, 0);
++	TEST_ASSERT_EQUAL_STRING("a^A.c:2  x^?", row);
++	free(row);
++}
++
++/* The whole path: a tags file with a bad name still gives a working
++ * menu, and choosing the bad row is refused by the file path rule. */
++void test_menu_with_invalid_name_opens_and_refuses_it(void) {
++	if (enter_menu_project() != 0) {
++		TEST_ASSERT(0 && "could not create temp project");
++		return;
++	}
++	write_file(menu_root, "tags",
++		   "close\tqq\xffy.py\t1;\"\tm\n"
++		   "close\ta.py\t2;\"\tm\n");
++	int keys[] = { '\r' };
++	jump_with_keys("x.close()", 2, keys, 1);
++	struct buffer *start = E.buf;
++	TEST_ASSERT_NULL(start->filename);
++	TEST_ASSERT_NULL(findBufferByName("*Tags*"));
++	leave_menu_project();
++}
++
++void test_menu_with_invalid_name_still_reaches_the_valid_row(void) {
++	if (enter_menu_project() != 0) {
++		TEST_ASSERT(0 && "could not create temp project");
++		return;
++	}
++	write_file(menu_root, "tags",
++		   "close\tqq\xffy.py\t1;\"\tm\n"
++		   "close\ta.py\t2;\"\tm\n");
++	int down[] = { CTRL('n'), '\r' };
++	jump_with_keys("x.close()", 2, down, 2);
++	TEST_ASSERT(E.buf->filename && ends_with(E.buf->filename, "a.py"));
++	leave_menu_project();
++}
++
+ void test_menu_cancels_when_macro_runs_out(void) {
+ 	if (enter_menu_project() != 0) {
+ 		TEST_ASSERT(0 && "could not create temp project");
+@@ -1002,6 +1072,11 @@ int main(void) {
+ 	RUN_TEST(test_menu_end_of_list_and_clamping);
+ 	RUN_TEST(test_menu_cancel_leaves_reader_in_place);
+ 	RUN_TEST(test_menu_lists_current_file_first);
++	RUN_TEST(test_menu_row_replaces_invalid_bytes_in_every_field);
++	RUN_TEST(test_menu_row_keeps_valid_text_and_tabs);
++	RUN_TEST(test_menu_row_shows_control_byte_as_caret);
++	RUN_TEST(test_menu_with_invalid_name_opens_and_refuses_it);
++	RUN_TEST(test_menu_with_invalid_name_still_reaches_the_valid_row);
+ 	RUN_TEST(test_menu_cancels_when_macro_runs_out);
+ 
+ 	return TEST_END();

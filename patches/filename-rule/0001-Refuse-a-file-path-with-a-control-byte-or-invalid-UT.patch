@@ -1,7 +1,7 @@
 From 9d6a32d17f4edee65925297cb5b042f61d49fa5a Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 14:33:27 +1100
-Subject: [PATCH] Refuse a file path with a control byte or invalid UTF-8
+Subject: [PATCH 1/4] Refuse a file path with a control byte or invalid UTF-8
 
 A path must be valid UTF-8 with no C0 control byte or DEL.  pathNameAllowed
 states the rule, replacing completion.c's nameInsertable, and bufferSetFilename
