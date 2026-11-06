@@ -56,8 +56,8 @@ Statements in `docs/undo-statements.md`, formal text in `acl2/undo/statements.li
 | C. Coalesced undo equals separate undos | `claim-c-holds` (`coalesce.lisp`) | **Proved** on the model | Same, plus the definition of a run | Approved |
 | The model behaves as emil's C | None | Tested: differential, 3.1M steps | Generator's reach | n/a |
 | Text changes only through the history | None | **Assumed. False in U2 and U3 on `main`;** tested on the branch | | Accepted by owner |
-| Every buffer holds valid UTF-8 (README) | None | **Tested, with known exceptions on `main` and `18d417c`:** bad buffer name in the minibuffer, `*Tags*`. No known exception at `14a69a0`. No write held invalid bytes in 3,105 logged writes. Not a proof assumption | | **For owner** |
-| A file path is valid UTF-8 with no C0 or DEL (spec decision, owner) | None | Tested, `9d6a32d`, not in the 15 patches. Documented, including the startup exit (`f903d6f`). Hard-linked same-file route stores no name | | Owner's rule |
+| Every buffer holds valid UTF-8 (README) | None | **Tested, with known exceptions on `main` and `18d417c`:** bad buffer name in the minibuffer, `*Tags*`. No known exception at `bff04b2`. No write held invalid bytes in 3,105 logged writes. Not a proof assumption | | **For owner** |
+| Stored paths stay raw, and a name is sanitised where it becomes row or minibuffer text (spec decision, owner; replaces the file path rule) | None | Tested, `bff04b2`, not in the 15 patches. Open, edit and save use the real path | | Owner's rule |
 | At least one row, no newline byte in a row | None | **Assumed, and on `main` still false:** register views and `*Completions*`. **On the branch (`18d417c`) no known exception.** Both fixed; `EMIL_DEBUG_ROW_BYTES` aborts on any newline entering a row in sanitize and fuzz builds, and didn't trip outside one test fixture. Tested, not proved. Not checked in normal builds | | **For owner** |
 
 Spec decisions: invalid range refused; buffers with no rows out of scope; a run's first edit doesn't fold into an earlier record.

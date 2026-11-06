@@ -206,58 +206,44 @@ In all 1,521, the invalid row was present before any key.
 - 31 seeds in 17 groups are still not minimised. The earlier attribution of the 257 wasn't repeated; they kept their groups.
 - Still no test or fuzz run reaches a few defensive lines, including `undo.c:360` (`UNDO_MISMATCH`).
 
-## Filename rule (owner request, separate from the 15)
+## Filename display (owner request, replaces the file path rule)
 
-`patches/filename-rule/`, one patch, `9d6a32d` on `18d417c`. The 15 apply without it. Nothing here changes the proofs or the model.
+The owner cancelled the file path rule, `9d6a32d`, and everything after it on `filename-rule`. Its patches are gone from `patches/`; the runs that tested it are in this file's git history. Stored paths stay raw. No refusals, messages or path rules are added.
 
-**Rule:** a path must be valid UTF-8 with no C0 control byte or DEL. `pathNameAllowed` states it (`completion.c`'s `nameInsertable` is gone, as it was the same test). `bufferSetFilename` is how a path becomes a buffer's name, with four callers: `editorOpenBody`, `saveBuffer`, `saveAs` and `changeDirectory`. Saves check before `confirmOverwrite`, and the setter computes the new name before freeing the old. `cd` works out every rebased name first and refuses, returning to the old directory, if any fails.
+`patches/filename-display/`, four patches on `18d417c`, ending at `bff04b2`. The first 15 are unchanged. All 19 on `ac98ba0b` give the `bff04b2` tree.
 
-**Size:** 83 lines added and 20 removed in source, against my estimate of 30 to 40 changed; `cd` is most of the difference. 197 test lines, against 60 to 100. The display fixes stay.
-
-**Every route, driven through a real editor with a bad path (`tests/undo/path_routes.py`), against `18d417c`:**
-
-| Route | `18d417c` | With the rule |
-|---|---|---|
-| Command line, `x\ty` or `qq\xFFy` | Opens, holds the name | **emil exits 1** with the message, as for other files it can't open |
-| `C-x C-f`, typed | Opens | Refused, message, stays in the buffer |
-| `C-x C-f`, glob | Opens | Refused, message |
-| `C-x C-f`, a bad name hard-linked to an open file | Switches, "are the same file" | **Same.** Stores no name, so the rule doesn't apply. The message shows the path |
-| `M-.`, tag path | Opens | No name stored. I didn't see the message on screen |
-| Tag jump back | Not driven | A bad name can't be on the stack now, as it never became a buffer |
-| Header/source toggle | Not driven | Derived from the current name. Goes through `editorOpen` |
-| Revert | Not driven | Existing name. Goes through `editorOpen` |
-| First save | Overwrites after `y` | Refused before the prompt, file unchanged |
-| `C-x C-w` | Overwrites after `y` | Refused before the prompt, file unchanged |
-| `cd` when a rebased name would fail | Takes the bad name | Refused, stays in the directory |
-| `cd`, valid names | Works | Works |
-| Special buffers | Fixed strings | Unchanged, not through the setter |
-
-**Tests:** 8 new in `test_fileio`, covering all four callers. Disabling each caller's check in turn makes `make test` fail, three on the named test and the first-save one by a crash in the `fileio` suite. **Reruns:** `make test` and sanitizers pass, no build warnings. Key fuzz, 3,000 seeds: seed 1127 only, 0 refusals, 0 row logs; 1,506 UTF-8 warnings from the added lines. Differential and refcheck weren't run on this patch.
-
-**Assumption 5 and the README sentence:** the minibuffer path is closed, as the bad name can't become a buffer. `*Tags*` is still open. A directory holding a bad byte can still be the working directory; only names are checked.
-
-## Final stack, `14a69a0` (owner request)
-
-`patches/filename-rule/`, four patches on `18d417c`. The first 15 are unchanged. All 19 applied to `ac98ba0b` give the `14a69a0` tree.
-
-| Patch | Commit | Source lines | Test lines |
+| Patch | Commit | Source | Tests or tool |
 |---|---|---|---|
-| File path rule | `9d6a32d` | +83 -20 | +197 |
-| `*Tags*` rows | `7068e5e` | +49 -8 (estimated 12 to 18) | +75 |
-| Docs: `emil.1`, README, CHANGELOG, including the startup exit | `f903d6f` | n/a | n/a |
-| `fuzz_keys.c`: leads on `C-x C-c` | `14a69a0` | n/a | +15 -1 (tool, applies alone on `18d417c`) |
+| `*Tags*` rows | `86d7eb6` | +49 -8 | +75 |
+| Fuzzer: leads on `C-x C-c` | `63a0ef6` | none | +15 -1 (tool) |
+| Names into the minibuffer, `main.c` error | `bd1a67d` | +30 -8 | +163 |
+| Docs: `emil.1`, README, CHANGELOG | `bff04b2` | +7 -1 (docs) | none |
 
-`*Tags*`: each field goes through `utf8SanitizeLine`, keeping tabs. With the sanitising removed, 2 of the new tests fail. In a real editor, the tags-menu scenario logs no invalid rows.
+**Routes from a stored filename:**
 
-Fuzz fix: with the added lines, printed warnings now equal the logged ones, 2,077 of 2,077. The fuzzer's own text gives 0.
+| Route | State | Evidence |
+|---|---|---|
+| TAB in the buffer and search prompts | Fixed, `bd1a67d` | Unit tests; real editor |
+| Completion cycling | Fixed, `bd1a67d` | Unit test only |
+| `main.c:380`, error at startup | Fixed, `bd1a67d` (now `:388`) | Real editor; raw at `18d417c` |
+| `*Completions*`, register views, `*Output*` | Already sanitised in the 15 | Real editor for the first two |
+| Mode line, status messages, prompts, confirm prompts | Stored raw, drawn through `abAppendSafe`. Not changed | Real editor for open, save, kill, quit, default prompt |
+| File completion | Name filtered by `nameInsertable`, typed part unchanged. Not changed | Unit test for a typed tab |
+| Kill ring, history | Hold only typed or edited text | Reading |
 
-**Reruns at `14a69a0`:** `make test` and sanitizers pass, no build warnings. Differential: 3.1M steps, 0 disagreements, 0 crashes, the same 8 "lie" cursors. Key fuzz with history checks, 3,000 seeds: seed 1127 only, 0 refusals, no newline rows. UTF-8 fuzz, own text: 0 invalid rows, 810 writes, all valid.
+`main.c:282` prints an unrecognised option raw. It isn't a stored filename, so it's left alone and reported.
 
-**Refcheck, `18d417c` against `14a69a0`:** 117 of 2,000 seeds differ. The same run on a scratch stack with the rule's four checks turned off and the other patches kept: **0 of 2,000**. So all 117 come from the rule. The minimised examples are a newline in a file prompt (`C-x C-r C-o RET`, `C-x C-w / C-o RET`), once accepted and now refused. Later keys then land differently, which is why buffers, files and windows differ.
+**Open, edit and save:** with a line feed, ESC or invalid UTF-8 in the name, in `test_fileio` and a real editor (`tests/undo/name_routes.py`). Existing and new files save to the real path, with no extra files. No row holds a newline or invalid UTF-8, and the raw name never reaches the terminal. 29 scenarios pass. At `18d417c`, 4 fail: 3 at the startup error and 1 with invalid UTF-8 in the minibuffer.
 
-**Refcheck, `ac98ba0` against `14a69a0`:** 352 differ, the 260 from before plus 92. None left. Many earlier seeds changed group, because refusals shift what follows.
+**A limit in the documented sentence:** "can be opened by exact path" holds on the command line for every name. In a prompt, a line feed can be typed with `C-o`, but ESC and invalid UTF-8 can't, and file completion hides such names. That's the same at `18d417c`.
 
-**Limits:** no test runs `fileio.c:931` (the fuzz does), `:1751` or `:1762-1763` (`cd` can't return). The fuzz never reaches the `*Tags*` lines. `newtests` didn't run for `ctags` and `fileio`. I read the 2 minimised examples, not all 117.
+**Reruns at `bff04b2`:** `make test` and sanitizers pass, no build warnings. Differential: 3.1M steps, 0 disagreements, 0 crashes, the same 8 "lie" cursors. Key fuzz with history checks, 3,000 seeds: seed 1127 only, 0 refusals, no newline rows. UTF-8 fuzz, own text: 0 invalid rows, 908 writes, all valid. With added lines, all 2,077 warnings print.
 
-**Verdict:** go for the filename and `*Tags*` patches.
+**Refcheck:** against `18d417c`, 0 of 2,000 seeds differ. Against `ac98ba0`, 260 differ, the same seeds in the same groups as `18d417c` against `ac98ba0`.
+
+**Limits:** the fuzz never reaches the `*Tags*` or completion-cycling lines. No suite test runs the `main.c` error, only the real-editor scenarios. `newtests` didn't run `ctags` against the old code.
+
+**Assumption 5 and the README rule:** no known exception at `bff04b2`. Tested, not proved.
+
+**Verdict:** go.
 

@@ -1,7 +1,7 @@
-From 14a69a0a59ae9c9d053056cb47bd807fe04a8da6 Mon Sep 17 00:00:00 2001
+From 63a0ef6a8fc264761fb3c1053519377b0baf5fc2 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 14:57:16 +1100
-Subject: [PATCH 4/4] Report a fuzz lead when the sequence ends with C-x C-c
+Subject: [PATCH 2/4] Report a fuzz lead when the sequence ends with C-x C-c
 
 C-x C-c ends a sequence through exit(), with status 0, so runChild called it
 clean and any lead it had was dropped.  With truncated UTF-8 lines added, that hid

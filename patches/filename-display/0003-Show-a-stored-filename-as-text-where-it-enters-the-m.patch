@@ -1,0 +1,319 @@
+From bd1a67dc644cdf69e4b190abf5fc19e734a82531 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 19:03:55 +1100
+Subject: [PATCH 3/4] Show a stored filename as text where it enters the
+ minibuffer
+
+TAB in the buffer and search prompts and completion cycling put a buffer's name
+into the minibuffer raw, so invalid UTF-8 could reach a row, and from there be
+yanked into a file buffer.  A line feed split the prompt across rows.  The name
+now goes through the existing sanitiser, a line feed showing as ^J.  It's just
+text from then on, and doesn't refer to the original.
+
+File matches are unchanged: scanDir filtered the name, and the rest was typed.
+
+The error for a file that can't be opened at startup printed the name and message
+raw to the terminal; it now sanitises both.
+
+Stored paths stay raw: opening, editing and saving use the real path.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ completion.c        | 26 +++++++++---
+ main.c              | 12 +++++-
+ tests/test_fileio.c | 64 +++++++++++++++++++++++++++++
+ tests/test_prompt.c | 99 +++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 193 insertions(+), 8 deletions(-)
+
+diff --git a/completion.c b/completion.c
+index bb262fc..395a4f7 100644
+--- a/completion.c
++++ b/completion.c
+@@ -266,6 +266,12 @@ static char *completionRowText(const char *name) {
+ 	return shown;
+ }
+ 
++/* A match as minibuffer text.  A substituted name is just text: it no
++ * longer refers to the original.  Caller frees. */
++static char *completionMinibufText(const char *name) {
++	return nameInsertable(name) ? xstrdup(name) : completionRowText(name);
++}
++
+ static void showCompletionsBuffer(char **matches, int n_matches,
+ 				  enum promptType type) {
+ 	/* Find or create completions buffer */
+@@ -473,10 +479,18 @@ void handleMinibufferCompletion(struct buffer *minibuf, enum promptType type) {
+ 		getCommandCompletions(text, &result);
+ 		break;
+ 	}
+-	if (tabOutcome(minibuf, &result, strlen(text), type))
+-		replaceMinibufferText(minibuf, result.n_matches == 1 ?
+-						       result.matches[0] :
+-						       result.common_prefix);
++	if (tabOutcome(minibuf, &result, strlen(text), type)) {
++		const char *done = result.n_matches == 1 ?
++					   result.matches[0] :
++					   result.common_prefix;
++		/* A buffer's name is stored raw.  A file match stays as it
++		 * is: scanDir filtered the name, the rest is what was typed. */
++		int stored = type == PROMPT_BUFFER || type == PROMPT_SEARCH;
++		char *shown = stored ? completionMinibufText(done) :
++				       xstrdup(done);
++		replaceMinibufferText(minibuf, shown);
++		free(shown);
++	}
+ 	tabEnd(minibuf);
+ 	freeCompletionResult(&result);
+ 	free(text);
+@@ -533,12 +547,12 @@ void cycleCompletion(struct buffer *minibuf, int direction) {
+ 	/* Update minibuffer text to the basename of the selected match */
+ 	const char *match = cs->matches[cs->selected];
+ 	const char *slash = strrchr(match, '/');
+-	const char *base = slash ? slash + 1 : match;
++	char *base = completionMinibufText(slash ? slash + 1 : match);
+ 	replaceMinibufferText(minibuf, base);
+ 
+ 	/* Update last_completed_text so TAB doesn't reset */
+ 	free(cs->last_completed_text);
+-	cs->last_completed_text = xstrdup(base);
++	cs->last_completed_text = base;
+ 	cs->completion_start_pos = minibufPointOffset(minibuf);
+ 
+ 	/* Update the completions buffer cursor to highlight the
+diff --git a/main.c b/main.c
+index f0b40bf..630eedb 100644
+--- a/main.c
++++ b/main.c
+@@ -242,6 +242,14 @@ static void usage(FILE *out) {
+ 	      out);
+ }
+ 
++/* A copy safe to send to the terminal.  Only for the way out: not freed. */
++static char *safeText(const char *s) {
++	size_t cap = strlen(s) * 3 + 1;
++	char *out = xmalloc(cap);
++	utf8SanitizeLine((const uint8_t *)s, strlen(s), out, cap);
++	return out;
++}
++
+ int main(int argc, char *argv[]) {
+ 	/* Set up a UTF-8 locale so that system wcwidth() works.  The
+ 	 * same call the width-dependent suites make, so what they
+@@ -377,8 +385,8 @@ int main(int argc, char *argv[]) {
+ 			if (editorOpen(newBuf, argv[i]) < 0) {
+ 				disableRawMode();
+ 
+-				fprintf(stderr, "%s: %s\n", argv[i],
+-					E.statusmsg);
++				fprintf(stderr, "%s: %s\n", safeText(argv[i]),
++					safeText(E.statusmsg));
+ 				exit(1);
+ 			}
+ 			newBuf->next = E.headbuf;
+diff --git a/tests/test_fileio.c b/tests/test_fileio.c
+index 3f4269e..e93b35a 100644
+--- a/tests/test_fileio.c
++++ b/tests/test_fileio.c
+@@ -6,6 +6,8 @@
+ #include "fileio.h"
+ #include "util.h"
+ #include "buffer.h"
++#include "mutate.h"
++#include "unicode.h"
+ #include <stdio.h>
+ #include <string.h>
+ #include <unistd.h>
+@@ -502,6 +504,62 @@ void test_first_save_of_unnamed_buffer_over_existing_file_asks(void) {
+ 	owTeardown();
+ }
+ 
++/* ---- a file whose name isn't valid text ---- */
++
++static void assert_rows_are_text(const struct buffer *buf) {
++	for (int i = 0; i < buf->numrows; i++) {
++		const erow *r = &buf->row[i];
++		TEST_ASSERT_TRUE(utf8_validate(r->chars, r->size));
++		TEST_ASSERT(r->size == 0 || !memchr(r->chars, '\n', r->size));
++	}
++}
++
++/* Opened by exact path, edited, saved: the real path, nothing else. */
++static void check_odd_name_existing(const char *name) {
++	owSetup();
++	char p[128];
++	owWrite(name, "old\n");
++	owPath(p, sizeof(p), name);
++	struct buffer *buf = make_test_buffer(NULL);
++	TEST_ASSERT_EQUAL_INT(0, editorOpen(buf, p));
++	TEST_ASSERT_EQUAL_STRING(p, buf->filename);
++	assert_rows_are_text(buf);
++
++	mutateInsert(buf, 0, 0, (const uint8_t *)"new", 3, NULL, NULL);
++	muteStdout();
++	doSave();
++	unmuteStdout();
++
++	TEST_ASSERT_EQUAL_STRING(p, buf->filename);
++	TEST_ASSERT_EQUAL_STRING("newold\n", owRead(name));
++	assert_rows_are_text(buf);
++	unlink(p);
++	owTeardown();
++}
++
++/* A new file: the first save creates that exact path. */
++static void check_odd_name_new(const char *name) {
++	owSetup();
++	char p[128];
++	owPath(p, sizeof(p), name);
++	struct buffer *buf = make_test_buffer(NULL);
++	TEST_ASSERT_EQUAL_INT(0, editorOpen(buf, p));
++	mutateInsert(buf, 0, 0, (const uint8_t *)"new", 3, NULL, NULL);
++	muteStdout();
++	doSave();
++	unmuteStdout();
++	TEST_ASSERT_EQUAL_STRING("new\n", owRead(name));
++	unlink(p);
++	owTeardown();
++}
++
++void test_lf_name_existing(void) { check_odd_name_existing("x\ny"); }
++void test_esc_name_existing(void) { check_odd_name_existing("x\x1b[0my"); }
++void test_invalid_name_existing(void) { check_odd_name_existing("x\xffy"); }
++void test_lf_name_new(void) { check_odd_name_new("x\ny"); }
++void test_esc_name_new(void) { check_odd_name_new("x\x1b[0my"); }
++void test_invalid_name_new(void) { check_odd_name_new("x\xffy"); }
++
+ /* Opened as "(New file)"; something else creates the file meanwhile. */
+ void test_new_file_created_meanwhile_is_not_overwritten_silently(void) {
+ 	owSetup();
+@@ -839,6 +897,12 @@ int main(void) {
+ 	RUN_TEST(test_save_as_over_existing_file_accepted_writes);
+ 	RUN_TEST(test_save_as_to_a_new_name_does_not_ask);
+ 	RUN_TEST(test_first_save_of_unnamed_buffer_over_existing_file_asks);
++	RUN_TEST(test_lf_name_existing);
++	RUN_TEST(test_esc_name_existing);
++	RUN_TEST(test_invalid_name_existing);
++	RUN_TEST(test_lf_name_new);
++	RUN_TEST(test_esc_name_new);
++	RUN_TEST(test_invalid_name_new);
+ 	RUN_TEST(test_new_file_created_meanwhile_is_not_overwritten_silently);
+ 
+ 	RUN_TEST(test_load_keeps_existing_final_newline);
+diff --git a/tests/test_prompt.c b/tests/test_prompt.c
+index 68d3d18..d58165f 100644
+--- a/tests/test_prompt.c
++++ b/tests/test_prompt.c
+@@ -520,6 +520,102 @@ static void check_newline_name_listed(enum promptType type) {
+ 	cleanupTestEditor();
+ }
+ 
++/* A stored name goes into the minibuffer as text it can hold. */
++static const struct {
++	const char *name, *shown;
++} bad_names[] = {
++	{ "qq\nyy", "qq^Jyy" },
++	{ "qq\x1b[0my", "qq^[[0my" },
++	{ "qq\xffy", "qq\xef\xbf\xbdy" },
++};
++
++static void assert_minibuf_is(const char *want) {
++	TEST_ASSERT_EQUAL_INT(1, E.minibuf->numrows);
++	TEST_ASSERT_EQUAL_INT((int)strlen(want), E.minibuf->row[0].size);
++	TEST_ASSERT_EQUAL_INT(0, memcmp(want, E.minibuf->row[0].chars, strlen(want)));
++	TEST_ASSERT_TRUE(utf8_validate(E.minibuf->row[0].chars,
++				       E.minibuf->row[0].size));
++}
++
++void test_completion_inserts_stored_name_as_text(void) {
++	for (size_t i = 0; i < sizeof(bad_names) / sizeof(bad_names[0]); i++) {
++		initTestEditor();
++		makeMinibuffer();
++		struct buffer *cur = make_test_buffer("x");
++		E.edbuf = cur;
++		struct buffer *b = newBuffer();
++		b->filename = xstrdup(bad_names[i].name);
++		cur->next = b;
++		mutateInsert(E.minibuf, 0, 0, (const uint8_t *)"qq", 2, NULL, NULL);
++		E.minibuf->cx = 2;
++		E.minibuf->cy = 0;
++
++		muteStdout();
++		handleMinibufferCompletion(E.minibuf, PROMPT_BUFFER);
++		unmuteStdout();
++
++		assert_minibuf_is(bad_names[i].shown);
++		TEST_ASSERT_EQUAL_STRING(bad_names[i].name, b->filename);
++		freeMinibuffer();
++		cleanupTestEditor();
++	}
++}
++
++void test_completion_cycle_inserts_stored_name_as_text(void) {
++	for (size_t i = 0; i < sizeof(bad_names) / sizeof(bad_names[0]); i++) {
++		initTestEditor();
++		makeMinibuffer();
++		(void)make_test_buffer("x");
++		struct completionState *cs = &E.minibuf->completionState;
++		cs->matches = xmalloc(sizeof(char *));
++		cs->matches[0] = xstrdup(bad_names[i].name);
++		cs->n_matches = 1;
++		cs->selected = 0;
++
++		muteStdout();
++		cycleCompletion(E.minibuf, 1);
++		unmuteStdout();
++
++		assert_minibuf_is(bad_names[i].shown);
++		freeMinibuffer();
++		cleanupTestEditor();
++	}
++}
++
++/* What was typed before a file match isn't a stored name: a tab in a
++ * directory stays a tab, or the path would no longer exist. */
++void test_file_completion_keeps_typed_prefix(void) {
++	char dir[] = "/tmp/emil-prompt-XXXXXX";
++	TEST_ASSERT_NOT_NULL(mkdtemp(dir));
++	char sub[128], file[160], typed[160];
++	snprintf(sub, sizeof(sub), "%s/a\tb", dir);
++	TEST_ASSERT_EQUAL_INT(0, mkdir(sub, 0700));
++	snprintf(file, sizeof(file), "%s/file", sub);
++	FILE *f = fopen(file, "w");
++	TEST_ASSERT_NOT_NULL(f);
++	fclose(f);
++
++	initTestEditor();
++	makeMinibuffer();
++	(void)make_test_buffer("x");
++	snprintf(typed, sizeof(typed), "%s/fi", sub);
++	mutateInsert(E.minibuf, 0, 0, (const uint8_t *)typed, (int)strlen(typed),
++		     NULL, NULL);
++	E.minibuf->cx = (int)strlen(typed);
++	E.minibuf->cy = 0;
++
++	muteStdout();
++	handleMinibufferCompletion(E.minibuf, PROMPT_FILES);
++	unmuteStdout();
++
++	assert_minibuf_is(file);
++	freeMinibuffer();
++	cleanupTestEditor();
++	unlink(file);
++	rmdir(sub);
++	rmdir(dir);
++}
++
+ void test_buffer_prompt_lists_newline_name_on_one_row(void) {
+ 	check_newline_name_listed(PROMPT_BUFFER);
+ }
+@@ -531,6 +627,9 @@ void test_search_prompt_lists_newline_name_on_one_row(void) {
+ int main(void) {
+ 	TEST_BEGIN();
+ 
++	RUN_TEST(test_completion_inserts_stored_name_as_text);
++	RUN_TEST(test_completion_cycle_inserts_stored_name_as_text);
++	RUN_TEST(test_file_completion_keeps_typed_prefix);
+ 	RUN_TEST(test_buffer_prompt_lists_newline_name_on_one_row);
+ 	RUN_TEST(test_search_prompt_lists_newline_name_on_one_row);
+ 	RUN_TEST(test_nested_prompt_preserves_buffer);

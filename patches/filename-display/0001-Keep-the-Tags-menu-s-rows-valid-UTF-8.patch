@@ -1,13 +1,13 @@
-From 7068e5e7c543d8448d7f688662b26e0a260a0b5a Mon Sep 17 00:00:00 2001
+From 86d7eb6e3940db01f77fe1159afe688f10c6b4a3 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
-Date: Fri, 6 Nov 2026 14:57:15 +1100
-Subject: [PATCH 2/4] Keep the *Tags* menu's rows valid UTF-8
+Date: Fri, 6 Nov 2026 19:02:55 +1100
+Subject: [PATCH 1/4] Keep the *Tags* menu's rows valid UTF-8
 
 A tags file is outside text, and its file, scope and pattern fields went into
 rows as they were, against the rule that every buffer holds valid UTF-8.  Each
 field now goes through utf8SanitizeLine.  A tab stays a tab, as definition lines
-often hold one.  Choosing a row still uses the parsed entry, so a bad name is
-refused by the file path rule, not by what the row shows.
+often hold one.  Choosing a row uses the parsed entry, so it opens the real path,
+not what the row shows.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
@@ -122,7 +122,7 @@ index f58cb7b..158ab09 100644
   * of ASCII identifier characters and non-ASCII letters, ended by
   * anything else -- including punctuation and U+200B ZERO WIDTH SPACE,
 diff --git a/tests/test_ctags.c b/tests/test_ctags.c
-index a23e523..9d29d33 100644
+index a23e523..254ee60 100644
 --- a/tests/test_ctags.c
 +++ b/tests/test_ctags.c
 @@ -6,6 +6,8 @@
@@ -175,8 +175,8 @@ index a23e523..9d29d33 100644
 +}
 +
 +/* The whole path: a tags file with a bad name still gives a working
-+ * menu, and choosing the bad row is refused by the file path rule. */
-+void test_menu_with_invalid_name_opens_and_refuses_it(void) {
++ * menu, and choosing the row opens the real path, not what it shows. */
++void test_menu_with_invalid_name_opens_the_real_path(void) {
 +	if (enter_menu_project() != 0) {
 +		TEST_ASSERT(0 && "could not create temp project");
 +		return;
@@ -184,10 +184,10 @@ index a23e523..9d29d33 100644
 +	write_file(menu_root, "tags",
 +		   "close\tqq\xffy.py\t1;\"\tm\n"
 +		   "close\ta.py\t2;\"\tm\n");
++	write_file(menu_root, "qq\xffy.py", "def close(): pass\n");
 +	int keys[] = { '\r' };
 +	jump_with_keys("x.close()", 2, keys, 1);
-+	struct buffer *start = E.buf;
-+	TEST_ASSERT_NULL(start->filename);
++	TEST_ASSERT(E.buf->filename && ends_with(E.buf->filename, "qq\xffy.py"));
 +	TEST_ASSERT_NULL(findBufferByName("*Tags*"));
 +	leave_menu_project();
 +}
@@ -216,7 +216,7 @@ index a23e523..9d29d33 100644
 +	RUN_TEST(test_menu_row_replaces_invalid_bytes_in_every_field);
 +	RUN_TEST(test_menu_row_keeps_valid_text_and_tabs);
 +	RUN_TEST(test_menu_row_shows_control_byte_as_caret);
-+	RUN_TEST(test_menu_with_invalid_name_opens_and_refuses_it);
++	RUN_TEST(test_menu_with_invalid_name_opens_the_real_path);
 +	RUN_TEST(test_menu_with_invalid_name_still_reaches_the_valid_row);
  	RUN_TEST(test_menu_cancels_when_macro_runs_out);
  

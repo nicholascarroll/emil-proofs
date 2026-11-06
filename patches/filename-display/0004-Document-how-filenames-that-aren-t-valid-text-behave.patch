@@ -1,0 +1,54 @@
+From bff04b2bb3779f24da02f75182440a4441e84743 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 19:03:56 +1100
+Subject: [PATCH 4/4] Document how filenames that aren't valid text behave
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ CHANGELOG.md | 3 +++
+ README.md    | 2 +-
+ emil.1       | 3 +++
+ 3 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 5765a20..7b8f3e7 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -17,6 +17,9 @@
+ - Fixed `C-q` inserting an invalid byte, after which the buffer could not be
+   saved, when a terminal resize interrupted it.
+ - The advisory lock's file descriptor is no longer inherited by shell commands.
++- Fixed filenames that aren't valid text reaching rows or the terminal unchanged.
++  Filenames that aren't valid text are displayed with substitutions, and can be opened by exact path. A substituted name in the minibuffer is just text, and doesn't refer to the original file.
++- Fixed invalid UTF-8 from a tags file reaching the `M-.` definitions menu.
+ 
+ ## [1.0.0] - 2026-10-12
+ - `emil --help` added.
+diff --git a/README.md b/README.md
+index f1e4138..5c8d654 100644
+--- a/README.md
++++ b/README.md
+@@ -169,7 +169,7 @@ Selections larger than  74,993 bytes are not sent to the clipboard and a status
+ 
+ ## Internals
+ 
+-Each buffer is an array of logical lines (`erow`) holding raw UTF-8 bytes. Every buffer contains only valid UTF-8; files that fail validation are rejected at load time. Rendering and text layout never modify the buffer.
++Each buffer is an array of logical lines (`erow`) holding raw UTF-8 bytes. Every buffer contains only valid UTF-8; files that fail validation are rejected at load time. Filenames that aren't valid text are displayed with substitutions, and can be opened by exact path. A substituted name in the minibuffer is just text, and doesn't refer to the original file. Rendering and text layout never modify the buffer.
+ 
+ A row's display width is cached on the row and recomputed when the row is edited. The renderer calculates wrap positions only for the rows on screen, not for the whole buffer.
+ 
+diff --git a/emil.1 b/emil.1
+index 3335fa8..88a3d6b 100644
+--- a/emil.1
++++ b/emil.1
+@@ -496,6 +496,9 @@ Files are loaded in their entirety into memory.
+ adheres to the Unix convention where lines are delimited by a single linefeed (LF) character and files terminate with a linefeed.
+ A file opened without a terminating linefeed gains one when it is loaded.
+ Validation at file load and inserting text in the buffer disallow  null bytes (0x00) or malformed UTF-8 sequences.
++.Pp
++Filenames that aren't valid text are displayed with substitutions, and can be opened by exact path.
++A substituted name in the minibuffer is just text, and doesn't refer to the original file.
+ .Ss File Persistence
+ When saving,
+ .Nm
