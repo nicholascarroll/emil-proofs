@@ -142,6 +142,66 @@ Owner's decisions: keep the replay check and the C-t fix. The stuck state is a k
 
 **What tripped it:** once, in a test fixture. `test_special_buffer_is_not_checked` built a row from `"output\n"` (`tests/test_warnings.c:679`). The test doesn't depend on that byte, so the fixture now says `"output"`. No production path tripped it.
 
-**Reruns at `18d417c`, check on:** `make test` and sanitizers pass, no build warnings. Key fuzz, 3,000 seeds: the check didn't trip, 0 history mismatches, 0 replay refusals, 0 invalid ranges. One failure: 1127, the known D4, with empty stderr. Also 1,521 "row is not valid UTF-8" leads, on exactly the same seeds as the run before the check. They predate this work and weren't investigated seed by seed.
+**Reruns at `18d417c`, check on:** `make test` and sanitizers pass, no build warnings. Key fuzz, 3,000 seeds: the check didn't trip, 0 history mismatches, 0 replay refusals, 0 invalid ranges. One failure: 1127, the known D4, with empty stderr. Also 1,521 "row is not valid UTF-8" leads; see "Final checks at `18d417c`" below.
 
 **Assumption 5:** no known exception on the patched branch. On `main`, the register views and `*Completions*` remain exceptions until the patches are applied. Limits: the fuzz doesn't reach the `*Completions*` case, so only the unit tests cover it. The check runs only in debug builds and only sees what those runs execute. "At least one row" isn't part of the check; the fuzz checks it after each key, and it didn't fail. The proofs still assume all of this. Differential and refcheck weren't rerun after `415c942`.
+
+## Final checks at `18d417c` (owner request)
+
+### The UTF-8 warnings
+
+Spec: `README.md:172` says every buffer contains only valid UTF-8. `emil.1:498` says load and insertion disallow malformed UTF-8.
+
+**The 1,521 are mine.** `tests/undo/fuzz_history.sh` adds truncated lines to a copy of the fuzzer's text, and `fillBuffer` puts them in the unnamed buffer with `insertRow`, skipping load validation. `tests/undo/fuzz_utf8.sh` reproduces the same 1,521 seeds, and logs every invalid row in every buffer and every file write.
+
+| Printed warnings at `18d417c` | Seeds | Buffer |
+|---|---|---|
+| Injected row, seen at the first check | 1,379 | Unnamed |
+| Injected row, first command took several keys | 80 | Unnamed |
+| Injected row, started in a file buffer, switched to it later | 62 | Unnamed |
+
+In all 1,521, the invalid row was present before any key.
+
+**The count is low.** 2,077 seeds have this warning, on `main` and the branch alike. The fuzzer loses the other 556 because `C-x C-c` exits with status 0. That gap is in `tests/fuzz_keys.c` on `main`. The newline and row-count checks abort instead, so they aren't affected.
+
+| 3,000 seeds | `main` stock | `18d417c` stock | `main` truncated | `18d417c` truncated |
+|---|---|---|---|---|
+| Seeds with an invalid row | 1 | **0** | 2,712 | 2,712 |
+| Printed warnings | 0 | 0 | 1,519 | 1,521 |
+| File writes (all valid) | 908 | 908 | 643 | 646 |
+| Writes with invalid bytes | 0 | 0 | 0 | 0 |
+| Saves refused | 0 | 0 | 445 | 441 |
+| Seeds with invalid bytes in a named file buffer | 0 | 0 | 73 | 82 |
+| Failures | 1127 | 1127 | 949, 1127, 1578, 1620, 2266 | 1127 |
+
+- Seed 753 is the one stock case on `main`: an invalid minibuffer row after `M-%`. It's one of the 13 seeds classified as U2, and is gone on the branch.
+- 1578 and 2266 crash on `main` before they can print, which is the difference of 2.
+- With invalid bytes already present, edits can spread them: `c3 f0 9f 98 80` becomes `9f 98 80` after `C-d`, as a 2-byte lead takes the next byte (seeds 1874, 2785, 2880). None arise from valid text in the stock runs.
+
+**Real paths, driven through a pty (`tests/undo/utf8_paths.py`, no injected text):**
+
+| Path | `main` | `18d417c` |
+|---|---|---|
+| Load, `C-x i`, stdin, shell output with invalid bytes | Refused | Refused |
+| Buffer named `qq\xFFy`, completed in the minibuffer | **Invalid row** | **Invalid row** |
+| Same name in `*Completions*` | **Invalid row** | Fixed |
+| Same name in register views | **Invalid rows** | Fixed |
+| Tags file with invalid bytes, `*Tags*` | **Invalid row** | **Invalid row** |
+| Killed from the minibuffer, yanked into a file buffer, saved | **Invalid row, save refused, file unchanged** | Same |
+
+**File save:** invalid bytes can reach a save attempt, but no write held any. `saveBuffer` is the only route to the write, and it refuses first (`fileio.c:896`). That is from reading plus the 3,105 logged writes, not a proof. A refused buffer can't be saved until the bytes are removed.
+
+**Spec:** the 1,521 aren't a violation by emil, as the harness skips validation. The minibuffer and `*Tags*` paths are violations of the README's sentence, on `main` too, and not regressions. Neither was fixed here.
+
+### Differential
+
+1,100 seeds, 3.1M steps: 0 disagreements, 0 property failures, 0 history mismatches, 0 crashes. Same as `415c942`, including the same 8 "lie" invalid cursors on the same seeds. The driver had the newline check on.
+
+### Refcheck, `ac98ba0` against `18d417c`
+
+2,000 seeds: 260 differ, up from 257. No seed left or changed group. The 3 new ones (744, 1197, 1986) are `53f223a` showing a control byte as `^X` in `*Output*`, and seed 1197's old row holds a real newline. I replayed all 3.
+
+- Findings 24 to 22: `completion.c` and `register.c` "changed lines no test runs" went, as the new tests run them.
+- Incomplete 23 to 28: 5 more suites with changed tests "did not run against the old code", so `newtests` says nothing for 10 suites.
+- 31 seeds in 17 groups are still not minimised. The earlier attribution of the 257 wasn't repeated; they kept their groups.
+- Still no test or fuzz run reaches a few defensive lines, including `undo.c:360` (`UNDO_MISMATCH`).

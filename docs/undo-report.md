@@ -2,6 +2,8 @@
 
 Emil `ac98ba0b` plus 15 patches (`patches/undo-refactor/`, ending at `18d417c`). The proofs, differential and refcheck ran at `415c942`; the last four patches change the register views, the `*Completions*` display, remove the unused `rowInsertChar`, and add a debug check. ACL2 `7ac80c83`; 31 newer commits, none mentioning soundness in their messages, so the pin stays.
 
+**Final checks at `18d417c`:** go for merge, with the reasons and limits in `docs/undo-stage2.md`. Two invalid UTF-8 paths remain, as on `main`: a buffer name completed in the minibuffer, and `*Tags*`.
+
 **Assumption 2, "all text changes go through edits, extensions, undo and redo", is currently false in U2 and U3 on `main`.** On the patched branch those two paths are fixed, and the key fuzz found no mismatch. That is test evidence. The proofs still assume it.
 
 ## Proved, on the model only

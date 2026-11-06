@@ -8,7 +8,7 @@
 
 ## Next step
 
-None planned. The owner applies the patches.
+Filename rule on its own branch over `18d417c`, as new patches. `*Tags*`: size reported first, then a separate fix.
 
 ## Reports
 
