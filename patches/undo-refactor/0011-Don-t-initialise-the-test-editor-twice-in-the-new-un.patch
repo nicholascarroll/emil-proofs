@@ -1,0 +1,82 @@
+From 415c942348200c6d13867ef8f9489df8854257b1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 12:27:55 +1100
+Subject: [PATCH 11/11] Don't initialise the test editor twice in the new undo
+ and replace tests
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ tests/test_replace.c | 6 ------
+ tests/test_undo.c    | 2 --
+ 2 files changed, 8 deletions(-)
+
+diff --git a/tests/test_replace.c b/tests/test_replace.c
+index 1d80a2a..c41c51e 100644
+--- a/tests/test_replace.c
++++ b/tests/test_replace.c
+@@ -384,7 +384,6 @@ static void assert_record_matches(struct buffer *buf, const struct undo *u,
+  * checking every record against the text before it is replayed. */
+ static void check_replace(const char **lines, int nlines, const char *regex,
+ 			  const char *repl, const char *want, int want_groups) {
+-	initTestEditor();
+ 	makeMinibuffer();
+ 	struct buffer *buf = make_test_buffer_lines(lines, nlines);
+ 	char *before = buffer_text(buf);
+@@ -430,7 +429,6 @@ static void check_replace(const char **lines, int nlines, const char *regex,
+ 	free(undone);
+ 	free(redone);
+ 	freeMinibuffer();
+-	cleanupTestEditor();
+ }
+ 
+ void test_replace_regex_one_row_history(void) {
+@@ -453,7 +451,6 @@ void test_replace_regex_to_nothing_history(void) {
+ /* Replacing the last row's text in a file with no final newline adds a
+  * repair record, which undoes with the replacement. */
+ void test_replace_regex_final_row_history(void) {
+-	initTestEditor();
+ 	makeMinibuffer();
+ 	struct buffer *buf = make_test_buffer("abc");
+ 	bufferResetRows(buf);
+@@ -473,12 +470,10 @@ void test_replace_regex_final_row_history(void) {
+ 	TEST_ASSERT_TRUE(buf->undo == NULL);
+ 
+ 	freeMinibuffer();
+-	cleanupTestEditor();
+ }
+ 
+ /* No match makes no record. */
+ void test_replace_regex_no_match_no_history(void) {
+-	initTestEditor();
+ 	makeMinibuffer();
+ 	const char *lines[] = { "abc", "" };
+ 	struct buffer *buf = make_test_buffer_lines(lines, 2);
+@@ -493,7 +488,6 @@ void test_replace_regex_no_match_no_history(void) {
+ 	TEST_ASSERT_TRUE(buf->undo == NULL);
+ 
+ 	freeMinibuffer();
+-	cleanupTestEditor();
+ }
+ 
+ int main(void) {
+diff --git a/tests/test_undo.c b/tests/test_undo.c
+index 271fdce..bbbc7f6 100644
+--- a/tests/test_undo.c
++++ b/tests/test_undo.c
+@@ -198,7 +198,6 @@ void test_undo_reports_changed_text(void) {
+ /* TAB in a prompt is an ordinary edit, so undo in the prompt is exact.
+  * It used to make no record, so undo deleted the wrong bytes. */
+ void test_prompt_tab_undoes(void) {
+-	initTestEditor();
+ 	makeMinibuffer();
+ 	make_test_buffer("x");
+ 	int keys[] = { 'a', 'b', CTRL('a'), '\t', CTRL('_'), '\r' };
+@@ -210,7 +209,6 @@ void test_prompt_tab_undoes(void) {
+ 	TEST_ASSERT_EQUAL_STRING("ab", (char *)got);
+ 	free(got);
+ 	freeMinibuffer();
+-	cleanupTestEditor();
+ }
+ 
+ /* A rebuilt buffer with no history just gets its new rows. */

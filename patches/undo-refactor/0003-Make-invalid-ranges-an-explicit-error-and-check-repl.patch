@@ -1,7 +1,7 @@
 From 330ee8dd119525b0f4151f4f58d6b228c53f2771 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 07:37:56 +1100
-Subject: [PATCH 03/10] Make invalid ranges an explicit error, and check replay
+Subject: [PATCH 03/11] Make invalid ranges an explicit error, and check replay
  against the text
 
 mutateReplace and friends return MUTATE_INVALID, and bulkDelete and bulkInsert

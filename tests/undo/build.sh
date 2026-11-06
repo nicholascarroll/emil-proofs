@@ -15,7 +15,7 @@ SAN="-g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-fra
 make -j2 CFLAGS="$SAN -fPIE ${EXTRA_CFLAGS:-}" LDFLAGS="-fsanitize=address,undefined -pie ${EXTRA_CFLAGS:-}" emil >make.log 2>&1 \
   || { tail -20 make.log; exit 1; }
 api=""
-grep -q 'old_text' mutate.h && api="-DEMIL_OLD_API"
+grep -q 'const uint8_t \*old_text' mutate.h && api="-DEMIL_OLD_API"
 grep -q 'enum mutateResult' mutate.h && api="$api -DEMIL_RESULT_API"
 objs=$(ls *.o | grep -vE '^(main|terminal)\.o$')
 cc -std=c99 -D_DEFAULT_SOURCE $SAN $api ${EXTRA_CFLAGS:-} -w -I. -Itests -c tests/stubs.c -o stubs.o.tmp

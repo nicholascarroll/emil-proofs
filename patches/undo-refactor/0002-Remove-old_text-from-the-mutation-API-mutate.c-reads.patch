@@ -1,7 +1,7 @@
 From 9876c0572d934df180d0f478827c2a52a72fffd3 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 07:34:03 +1100
-Subject: [PATCH 02/10] Remove old_text from the mutation API: mutate.c reads
+Subject: [PATCH 02/11] Remove old_text from the mutation API: mutate.c reads
  it from the buffer
 
 No caller needs to supply it.  Over make test and 4,000 key-fuzz seeds, every

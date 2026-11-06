@@ -1,7 +1,7 @@
 From de1c12e317627a919b04436df8e4f0abc1ab0be4 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 07:45:32 +1100
-Subject: [PATCH 05/10] Move undo record creation and freeing into undorecord.c
+Subject: [PATCH 05/11] Move undo record creation and freeing into undorecord.c
 
 Four hand-built records in mutate.c become undoRecordNew.  The record-construction
 invariant in run_tests.sh now names both constructors, and allows undorecord.c.

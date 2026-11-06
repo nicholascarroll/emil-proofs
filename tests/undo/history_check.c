@@ -99,7 +99,9 @@ static void hc_check_rows(struct buffer *buf) {
 	for (int i = 0; i < buf->numrows; i++)
 		if (buf->row[i].size > 0 &&
 		    memchr(buf->row[i].chars, '\n', buf->row[i].size)) {
-			fprintf(stderr, "ROWS-INVALID newline byte in a row\n");
+			fprintf(stderr, "ROWS-INVALID newline byte in a row of %s buffer, history %s\n",
+				buf == E.minibuf ? "the minibuffer" : buf->special_buffer ? "a special" : "a file",
+				(buf->undo || buf->redo) ? "present" : "empty");
 			abort();
 		}
 }
