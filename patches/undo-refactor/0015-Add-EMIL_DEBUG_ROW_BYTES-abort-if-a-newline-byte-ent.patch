@@ -1,0 +1,201 @@
+From 18d417cf84c61c6778c3c946927b7fde99318841 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 13:42:20 +1100
+Subject: [PATCH 15/15] Add EMIL_DEBUG_ROW_BYTES: abort if a newline byte
+ enters a row
+
+On in make sanitize, the key fuzzer and refcheck; not in normal builds.  It checks
+insertRow, appendRowRaw and the writes in bulkInsertRaw and bulkDelete.  It tripped
+once in the suite, on a test fixture: test_warnings built a row from "output\\n".
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ Makefile              |  2 +-
+ buffer.c              |  2 ++
+ buffer.h              | 17 +++++++++++++++++
+ refcheck/build.sh     |  2 +-
+ tests/fuzz_keys.sh    |  2 +-
+ tests/test_buffer.c   | 33 +++++++++++++++++++++++++++++++++
+ tests/test_warnings.c |  2 +-
+ undo.c                |  3 +++
+ 8 files changed, 59 insertions(+), 4 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 7fb3cfe..760a620 100644
+--- a/Makefile
++++ b/Makefile
+@@ -120,7 +120,7 @@ check: test
+ 
+ sanitize:
+ 	$(MAKE) clean
+-	$(MAKE) CFLAGS="-g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -fPIE -DEMIL_DEBUG_ROW_CACHE -DEMIL_DEBUG_FOCUS" \
++	$(MAKE) CFLAGS="-g -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -fPIE -DEMIL_DEBUG_ROW_CACHE -DEMIL_DEBUG_FOCUS -DEMIL_DEBUG_ROW_BYTES" \
+ 	        LDFLAGS="-fsanitize=address,undefined -pie" test
+ 
+ # Sorry Dave
+diff --git a/buffer.c b/buffer.c
+index 05c38e6..5d7b0af 100644
+--- a/buffer.c
++++ b/buffer.c
+@@ -105,6 +105,7 @@ static void bufEnsureRowCap(struct buffer *bufr) {
+ }
+ 
+ void insertRow(struct buffer *bufr, int at, const uint8_t *s, size_t len) {
++	debugCheckRowBytes(s, len);
+ 	if (at < 0 || at > bufr->numrows)
+ 		return;
+ 
+@@ -134,6 +135,7 @@ void insertRow(struct buffer *bufr, int at, const uint8_t *s, size_t len) {
+  * buffer is being populated from disk.
+  */
+ void appendRowRaw(struct buffer *bufr, const uint8_t *s, size_t len) {
++	debugCheckRowBytes(s, len);
+ 	if (len > (size_t)INT_MAX - 1)
+ 		abort();
+ 
+diff --git a/buffer.h b/buffer.h
+index c49916f..1e5f9ed 100644
+--- a/buffer.h
++++ b/buffer.h
+@@ -13,6 +13,23 @@
+ struct buffer;
+ int rejectIfReadOnly(struct buffer *buf);
+ 
++/* '\n' is the row separator, never a byte in a row.  EMIL_DEBUG_ROW_BYTES
++ * aborts if one is about to enter a row; every write of new bytes into a
++ * row calls this first. */
++#ifdef EMIL_DEBUG_ROW_BYTES
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++static inline void debugCheckRowBytes(const uint8_t *s, size_t len) {
++	if (len > 0 && memchr(s, '\n', len) != NULL) {
++		fprintf(stderr, "EMIL_DEBUG_ROW_BYTES: newline byte entering a row\n");
++		abort();
++	}
++}
++#else
++#define debugCheckRowBytes(s, len) ((void)0)
++#endif
++
+ void insertRow(struct buffer *bufr, int at, const uint8_t *s, size_t len);
+ void appendRowRaw(struct buffer *bufr, const uint8_t *s, size_t len);
+ int killBufferNeedsConfirm(const struct buffer *bufr);
+diff --git a/refcheck/build.sh b/refcheck/build.sh
+index b02e7ee..423619c 100755
+--- a/refcheck/build.sh
++++ b/refcheck/build.sh
+@@ -57,6 +57,6 @@ MK
+ }
+ mkdir -p "$OUT/cov/obj"
+ write_mk "$OUT/obj" "$OUT/difffuzz" "-O1 -fsanitize=address,undefined \
+-	-fno-sanitize-recover=all -fno-omit-frame-pointer -DEMIL_DEBUG_ROW_CACHE"
++	-fno-sanitize-recover=all -fno-omit-frame-pointer -DEMIL_DEBUG_ROW_CACHE -DEMIL_DEBUG_ROW_BYTES"
+ write_mk "$OUT/cov/obj" "$OUT/cov/difffuzz" "-O0 --coverage"
+ echo "$OUT/difffuzz"
+diff --git a/tests/fuzz_keys.sh b/tests/fuzz_keys.sh
+index 75941b2..320ddf7 100755
+--- a/tests/fuzz_keys.sh
++++ b/tests/fuzz_keys.sh
+@@ -20,7 +20,7 @@ mkdir -p "$WORK/obj" "$WORK/sandbox/sub"
+ 
+ CFLAGS="-std=c99 -D_DEFAULT_SOURCE -D_BSD_SOURCE -g -O1 \
+     -fsanitize=address,undefined -fno-sanitize-recover=all \
+-    -fno-omit-frame-pointer -DEMIL_DEBUG_ROW_CACHE -DEMIL_VERSION=\"fuzz\""
++    -fno-omit-frame-pointer -DEMIL_DEBUG_ROW_CACHE -DEMIL_DEBUG_ROW_BYTES -DEMIL_VERSION=\"fuzz\""
+ 
+ OBJS=""
+ for src in "$ROOT"/*.c; do
+diff --git a/tests/test_buffer.c b/tests/test_buffer.c
+index 270802f..0f7d2e0 100644
+--- a/tests/test_buffer.c
++++ b/tests/test_buffer.c
+@@ -99,6 +99,36 @@ void test_del_row_end(void) {
+ 	TEST_ASSERT_EQUAL_STRING("second", (char *)buf->row[1].chars);
+ }
+ 
++/* ---- The newline rule, in the sanitize build ---- */
++
++#ifdef EMIL_DEBUG_ROW_BYTES
++#include <signal.h>
++#include <sys/wait.h>
++#include <unistd.h>
++static void assert_row_write_aborts(int append) {
++	pid_t pid = fork();
++	TEST_ASSERT(pid >= 0);
++	if (pid == 0) {
++		if (freopen("/dev/null", "w", stderr) == NULL)
++			_exit(1);
++		struct buffer *buf = make_test_buffer("x");
++		if (append)
++			appendRowRaw(buf, (const uint8_t *)"a\nb", 3);
++		else
++			insertRow(buf, 0, (const uint8_t *)"a\nb", 3);
++		_exit(0);
++	}
++	int status = 0;
++	waitpid(pid, &status, 0);
++	TEST_ASSERT(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
++}
++
++void test_debug_check_stops_newline_entering_a_row(void) {
++	assert_row_write_aborts(0);
++	assert_row_write_aborts(1);
++}
++#endif
++
+ /* ---- Coordinate mapping ---- */
+ 
+ void test_chars_to_display_ascii(void) {
+@@ -407,6 +437,9 @@ void test_blob_does_not_mark_dirty(void) {
+ int main(void) {
+ 	TEST_BEGIN();
+ 
++	#ifdef EMIL_DEBUG_ROW_BYTES
++	RUN_TEST(test_debug_check_stops_newline_entering_a_row);
++#endif
+ 	RUN_TEST(test_new_destroy_buffer);
+ 	RUN_TEST(test_insert_row_beginning);
+ 	RUN_TEST(test_insert_row_end);
+diff --git a/tests/test_warnings.c b/tests/test_warnings.c
+index 5936613..53d6f31 100644
+--- a/tests/test_warnings.c
++++ b/tests/test_warnings.c
+@@ -676,7 +676,7 @@ void test_user_readonly_not_lifted_by_lock_release(void) {
+  * filename guard alone let it through to stat() a literal "*stdin*"
+  * in the cwd every two seconds. */
+ void test_special_buffer_is_not_checked(void) {
+-	struct buffer *b = make_test_buffer("output\n");
++	struct buffer *b = make_test_buffer("output");
+ 	b->filename = xstrdup("*stdin*");
+ 	b->special_buffer = 1;
+ 	b->open_mtime = 1;
+diff --git a/undo.c b/undo.c
+index b0aa307..0bc10e9 100644
+--- a/undo.c
++++ b/undo.c
+@@ -68,6 +68,7 @@ static void bulkInsertRaw(struct buffer *buf, int startx, int starty,
+ 		rowEnsureCap(row, needed);
+ 		memmove(&row->chars[startx + datalen], &row->chars[startx],
+ 			row->size - startx + 1); /* +1 for NUL */
++		debugCheckRowBytes(data, datalen);
+ 		memcpy(&row->chars[startx], data, datalen);
+ 		row->size += datalen;
+ 		row->cached_width = -1;
+@@ -99,6 +100,7 @@ static void bulkInsertRaw(struct buffer *buf, int startx, int starty,
+ 	int new_size = startx + first_frag_len;
+ 	row->chars = xrealloc(row->chars, new_size + 1);
+ 	row->charcap = new_size + 1;
++	debugCheckRowBytes(data, first_frag_len);
+ 	if (first_frag_len > 0)
+ 		memcpy(&row->chars[startx], data, first_frag_len);
+ 	row->size = new_size;
+@@ -207,6 +209,7 @@ int bulkDelete(struct buffer *buf, int startx, int starty, int endx, int endy) {
+ 		int new_size = startx + (last->size - endx);
+ 		first->chars = xrealloc(first->chars, new_size + 1);
+ 		first->charcap = new_size + 1;
++		debugCheckRowBytes(&last->chars[endx], last->size - endx);
+ 		memcpy(&first->chars[startx], &last->chars[endx],
+ 		       last->size - endx);
+ 		first->size = new_size;

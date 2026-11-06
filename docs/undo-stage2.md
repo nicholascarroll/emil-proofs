@@ -115,7 +115,7 @@ Owner's decisions: keep the replay check and the C-t fix. The stuck state is a k
 
 | Path | Can hold a newline? | How I know |
 |---|---|---|
-| `completion.c:291` `*Completions*` for the buffer prompt (and search prompt, same list) | **Yes** | `repro_paths completion-buffer-newline`: row `qq\x0Ayy`. **Not fixed; for you** |
+| `completion.c:291` `*Completions*` for the buffer prompt (and search prompt, same list) | Not now | Fixed in `49b5902`, shown as `^J`. `repro_paths completion-buffer-newline`: row `qq^Jyy` |
 | `register.c` headers and preview | Not now | Fixed |
 | `completion.c:366` `*Completions*` for files and commands | No | File scan refuses names the minibuffer can't hold; `repro_paths completion-file-newline` lists nothing. Commands are fixed names |
 | `completion.c:248` minibuffer text | No | Splits on newline |
@@ -124,10 +124,24 @@ Owner's decisions: keep the replay check and the C-t fix. The stuck state is a k
 | `buffer.c` `bufferLoadBlob` (registers, pipe, palette, stdin) | No | Splits on newline |
 | `undo.c` `bulkInsertRaw`, and so all mutations | No | Splits on newline |
 | `mutate.c` rebuild | No | Splits on newline |
-| `rowInsertChar` | Could | No caller outside tests now. From grep |
+| `rowInsertChar` | Gone | Removed in `17320f2`: it had no non-test caller |
 
 **Limit:** this is one search of the `insertRow`, `appendRowRaw`, `rowInsertChar` and direct `chars` writes in non-test code. It rests partly on reading.
 
 **Reruns at `53f223a`:** `make test` passes, sanitizers pass, no build warnings. Key fuzz, 3,000 seeds with truncated UTF-8 lines: 0 rows with a newline, whether checked after each key or logged at each row created, 0 history mismatches, 0 replay refusals, 0 invalid ranges. One failure: 1127, the known D4. The fuzz doesn't hit the `*Completions*` case: it took a direct reproduction to show it.
 
-**So assumption 5 is still false in that one case.** The proofs are unchanged. Differential and refcheck weren't rerun, as you didn't ask.
+**So at `53f223a` assumption 5 was still false in that one case, fixed below.** The proofs are unchanged. Differential and refcheck weren't rerun, as you didn't ask.
+
+## Enforcing the rule (owner request)
+
+**`49b5902`:** `*Completions*` shows a newline as `^J`, in both the buffer list and the column layout, using `utf8SanitizeLine`. Tests: `test_buffer_prompt_lists_newline_name_on_one_row` and `test_search_prompt_lists_newline_name_on_one_row`. With the old `completion.c`, both fail in `make test` and the check aborts in `make sanitize`.
+
+**`17320f2`:** `rowInsertChar` removed, as it had no non-test caller. Its test went; `test_undo_reports_changed_text` now builds its row with `bufferResetRows` and `insertRow`.
+
+**`18d417c`:** `EMIL_DEBUG_ROW_BYTES` aborts if a newline enters a row. On in `make sanitize`, `tests/fuzz_keys.sh` and `refcheck/build.sh`. Not in a normal build: `emil` holds no trace of the string. It covers `insertRow`, `appendRowRaw`, and the three places in `undo.c` that copy into an existing row. A search for direct `chars` writes in non-test code found no others that add bytes. `rowEnsureCap`, the `fileio.c` shrink and `memmove` within a row add no new bytes. A fork test confirms it aborts through `insertRow` and `appendRowRaw`; the `undo.c` sites have no such test.
+
+**What tripped it:** once, in a test fixture. `test_special_buffer_is_not_checked` built a row from `"output\n"` (`tests/test_warnings.c:679`). The test doesn't depend on that byte, so the fixture now says `"output"`. No production path tripped it.
+
+**Reruns at `18d417c`, check on:** `make test` and sanitizers pass, no build warnings. Key fuzz, 3,000 seeds: the check didn't trip, 0 history mismatches, 0 replay refusals, 0 invalid ranges. One failure: 1127, the known D4, with empty stderr. Also 1,521 "row is not valid UTF-8" leads, on exactly the same seeds as the run before the check. They predate this work and weren't investigated seed by seed.
+
+**Assumption 5:** no known exception on the patched branch. On `main`, the register views and `*Completions*` remain exceptions until the patches are applied. Limits: the fuzz doesn't reach the `*Completions*` case, so only the unit tests cover it. The check runs only in debug builds and only sees what those runs execute. "At least one row" isn't part of the check; the fuzz checks it after each key, and it didn't fail. The proofs still assume all of this. Differential and refcheck weren't rerun after `415c942`.

@@ -65,7 +65,8 @@ int main(int argc, char **argv) {
 		b->cx = 0; b->cy = 0;
 		show("typed ", b);
 		/* What insertChar did before the U2 fix: a change with no record. */
-		rowInsertChar(b, &b->row[0], 0, '\t');
+		bufferResetRows(b);
+		insertRow(b, 0, (const uint8_t *)"\tab", 3);
 		b->cx = 1;
 		show("TAB   ", b);
 		doUndo(b, 1);

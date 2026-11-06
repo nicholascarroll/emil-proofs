@@ -1,7 +1,7 @@
 From 1e5f0c3076c3a1441e88caf78c9112ac2d4fdb49 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 11:38:00 +1100
-Subject: [PATCH 08/12] Test replaceRegex end to end, including its history
+Subject: [PATCH 08/15] Test replaceRegex end to end, including its history
 
 The regex replace call to mutateReplace ran in neither the suite nor the key
 fuzzer, so removing old_text there rested on reading the code.  Drive the

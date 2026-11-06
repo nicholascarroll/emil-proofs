@@ -1,7 +1,7 @@
 From 415c942348200c6d13867ef8f9489df8854257b1 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 12:27:55 +1100
-Subject: [PATCH 11/12] Don't initialise the test editor twice in the new undo
+Subject: [PATCH 11/15] Don't initialise the test editor twice in the new undo
  and replace tests
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

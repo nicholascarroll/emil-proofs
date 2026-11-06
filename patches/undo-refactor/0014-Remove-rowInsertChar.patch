@@ -1,0 +1,113 @@
+From 17320f29fd018ea5f4fc5e9b3cd92391143d7340 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 13:38:09 +1100
+Subject: [PATCH 14/15] Remove rowInsertChar
+
+Nothing outside the tests called it once insertChar was gone.  It was also the one
+primitive that could put any byte, including a newline, into a row.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ buffer.c                 | 15 ---------------
+ buffer.h                 |  1 -
+ tests/test_buffer.c      |  8 --------
+ tests/test_undo.c        |  4 +++-
+ tests/test_visual_line.c |  5 +----
+ 5 files changed, 4 insertions(+), 29 deletions(-)
+
+diff --git a/buffer.c b/buffer.c
+index 3735570..05c38e6 100644
+--- a/buffer.c
++++ b/buffer.c
+@@ -169,21 +169,6 @@ void delRow(struct buffer *bufr, int at) {
+ 	markBufferDirty(bufr);
+ }
+ 
+-void rowInsertChar(struct buffer *bufr, erow *row, int at, int c) {
+-	if (at < 0 || at > row->size)
+-		at = row->size;
+-
+-	if (row->size > INT_MAX - 2)
+-		abort();
+-	int needed = row->size + 2;
+-	rowEnsureCap(row, needed);
+-	memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+-	row->size++;
+-	row->chars[at] = c;
+-	markBufferDirty(bufr);
+-	row->cached_width = -1;
+-}
+-
+ struct buffer *newBuffer(void) {
+ 	struct buffer *ret = xmalloc(sizeof(struct buffer));
+ 	ret->markx = -1;
+diff --git a/buffer.h b/buffer.h
+index 47776bc..c49916f 100644
+--- a/buffer.h
++++ b/buffer.h
+@@ -19,7 +19,6 @@ int killBufferNeedsConfirm(const struct buffer *bufr);
+ void rowEnsureCap(erow *row, int needed);
+ void freeRow(erow *row);
+ void delRow(struct buffer *bufr, int at);
+-void rowInsertChar(struct buffer *bufr, erow *row, int at, int c);
+ struct buffer *newBuffer(void);
+ void destroyBuffer(struct buffer *buf);
+ void updateBuffer(struct buffer *buf);
+diff --git a/tests/test_buffer.c b/tests/test_buffer.c
+index 5cb0762..270802f 100644
+--- a/tests/test_buffer.c
++++ b/tests/test_buffer.c
+@@ -99,13 +99,6 @@ void test_del_row_end(void) {
+ 	TEST_ASSERT_EQUAL_STRING("second", (char *)buf->row[1].chars);
+ }
+ 
+-void test_row_insert_char(void) {
+-	struct buffer *buf = make_test_buffer("AC");
+-	rowInsertChar(buf, &buf->row[0], 1, 'B');
+-	TEST_ASSERT_EQUAL_INT(3, buf->row[0].size);
+-	TEST_ASSERT_EQUAL_STRING("ABC", (char *)buf->row[0].chars);
+-}
+-
+ /* ---- Coordinate mapping ---- */
+ 
+ void test_chars_to_display_ascii(void) {
+@@ -419,7 +412,6 @@ int main(void) {
+ 	RUN_TEST(test_insert_row_end);
+ 	RUN_TEST(test_del_row_beginning);
+ 	RUN_TEST(test_del_row_end);
+-	RUN_TEST(test_row_insert_char);
+ 
+ 	RUN_TEST(test_chars_to_display_ascii);
+ 	RUN_TEST(test_chars_to_display_tab);
+diff --git a/tests/test_undo.c b/tests/test_undo.c
+index bbbc7f6..761e6c3 100644
+--- a/tests/test_undo.c
++++ b/tests/test_undo.c
+@@ -186,7 +186,9 @@ void test_undo_reports_changed_text(void) {
+ 	mutateInsert(buf, 0, 0, (const uint8_t *)"ab", 2, NULL, NULL);
+ 	buf->cx = 0;
+ 	buf->cy = 0;
+-	rowInsertChar(buf, &buf->row[0], 0, '\t');
++	/* Rebuild the row by hand: nothing in emil changes text this way. */
++	bufferResetRows(buf);
++	insertRow(buf, 0, (const uint8_t *)"\tab", 3);
+ 	buf->cx = 1;
+ 
+ 	struct undo *undo = buf->undo;
+diff --git a/tests/test_visual_line.c b/tests/test_visual_line.c
+index 78da98e..a0a7653 100644
+--- a/tests/test_visual_line.c
++++ b/tests/test_visual_line.c
+@@ -453,10 +453,7 @@ void test_ctdc_empty_row(void) {
+  * continuously instead of on a rare path.
+  *
+  * So assert what the protocol promises rather than what the cache
+- * contains.  selfInsert()/delChar() rather than insertChar(): the
+- * latter is a raw primitive that calls rowInsertChar() directly and
+- * invalidates on the line below its own memmove, which is hard to get
+- * wrong.  A keystroke goes through the mutation layer to
++ * contains.  selfInsert()/delChar(): a keystroke goes through the mutation layer to
+  * bulkInsert/bulkDelete, which is where an invalidation would actually
+  * go missing, and that is the path worth pinning. */
+ void test_ctdc_width_follows_a_mutation(void) {

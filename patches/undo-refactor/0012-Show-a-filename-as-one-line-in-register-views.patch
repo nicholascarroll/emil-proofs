@@ -1,7 +1,7 @@
 From 53f223aaaa99137b63346b84e1b31276ef308a14 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 13:20:13 +1100
-Subject: [PATCH 12/12] Show a filename as one line in register views
+Subject: [PATCH 12/15] Show a filename as one line in register views
 
 C-x r v and C-x r V wrote a point register's filename into a row as it was,
 and a filename can hold a newline, which is emil's row separator and never a

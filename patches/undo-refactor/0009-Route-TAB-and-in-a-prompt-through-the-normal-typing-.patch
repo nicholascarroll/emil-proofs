@@ -1,7 +1,7 @@
 From 0b091b6e286be8c1f88ad78b1de5d0f2226d24ff Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 12:08:11 +1100
-Subject: [PATCH 09/12] Route TAB and / in a prompt through the normal typing
+Subject: [PATCH 09/15] Route TAB and / in a prompt through the normal typing
  path
 
 insertChar changed the minibuffer with no undo record, so undo in that prompt

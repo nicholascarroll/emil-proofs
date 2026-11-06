@@ -1,7 +1,7 @@
 From 3e12bf3ca86ba49af3fcbe448d6a99a0f0171716 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 07:49:00 +1100
-Subject: [PATCH 06/12] Free the extra buffers in the new undo tests
+Subject: [PATCH 06/15] Free the extra buffers in the new undo tests
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi

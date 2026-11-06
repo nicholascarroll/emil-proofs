@@ -58,7 +58,7 @@ A run may end with an edit that triggers final-newline repair. Both undo paths r
 | 2 | **All text changes go through edits, extensions, undo and redo** | **False in two known places:** U2 (TAB or `/` in a prompt) and U3 (rebuilt writable special buffer). No mismatch in file buffers in the key fuzz. The C now refuses to replay on a mismatch, instead of corrupting |
 | 3 | The history isn't cleared during the sequence, and "original" means the text when it was last cleared | Clearing happens on file load and per prompt |
 | 4 | The buffer isn't read-only when undoing, and no read-only change occurs in the sequence | A read-only buffer refuses undo, which the model also does, but read-only changes aren't in the sequences |
-| 5 | Starts with at least one row, and no row contains a newline byte | `bufferEnsureRow` and the loaders are meant to ensure this. Not proved |
+| 5 | Starts with at least one row, and no row contains a newline byte | **False on `main`:** register views and `*Completions*`. On the patched branch no known exception, with a debug check in sanitize and fuzz builds. Tested, not proved (`docs/undo-stage2.md`) |
 | 6 | Replacement text is a list of bytes | C passes a pointer and length |
 | 7 | No `INT_MAX` overflow, and allocation succeeds | Not modelled. C aborts on the size guards |
 
