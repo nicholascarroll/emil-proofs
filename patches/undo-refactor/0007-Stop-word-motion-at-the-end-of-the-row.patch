@@ -1,7 +1,7 @@
 From 0ac84d2f9c0db9a86cc2bc87c5e42eac8f89a3b7 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 08:10:03 +1100
-Subject: [PATCH 7/7] Stop word motion at the end of the row
+Subject: [PATCH 07/10] Stop word motion at the end of the row
 
 forwardWordEnd stepped by a lead byte's claimed length, so a word ending in a
 truncated UTF-8 sequence ended past the row.  bulkDelete used to clamp that

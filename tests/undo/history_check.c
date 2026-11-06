@@ -90,8 +90,23 @@ static void hc_walk(struct buffer *buf, struct hc_text *t, const struct undo *u,
 
 static unsigned long hc_checks, hc_records;
 
+/* Assumption 5: at least one row, and no newline byte inside a row. */
+static void hc_check_rows(struct buffer *buf) {
+	if (buf->numrows < 1) {
+		fprintf(stderr, "ROWS-INVALID no rows\n");
+		abort();
+	}
+	for (int i = 0; i < buf->numrows; i++)
+		if (buf->row[i].size > 0 &&
+		    memchr(buf->row[i].chars, '\n', buf->row[i].size)) {
+			fprintf(stderr, "ROWS-INVALID newline byte in a row\n");
+			abort();
+		}
+}
+
 static void hc_check_buffer(struct buffer *buf) {
 	static struct hc_text t;
+	hc_check_rows(buf);
 	if (!buf->undo && !buf->redo)
 		return;
 	hc_checks++;

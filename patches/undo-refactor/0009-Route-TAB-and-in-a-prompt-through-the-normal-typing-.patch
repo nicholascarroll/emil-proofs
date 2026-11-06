@@ -1,0 +1,181 @@
+From 0b091b6e286be8c1f88ad78b1de5d0f2226d24ff Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 12:08:11 +1100
+Subject: [PATCH 09/10] Route TAB and / in a prompt through the normal typing
+ path
+
+insertChar changed the minibuffer with no undo record, so undo in that prompt
+replayed records against different text.  Prompts now use selfInsert, and with
+no callers left insertChar is gone.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ edit.c            | 23 +----------------------
+ edit.h            |  1 -
+ prompt.c          |  4 ++--
+ tests/test_edit.c |  6 +++---
+ tests/test_undo.c | 24 +++++++++++++++++++++++-
+ 5 files changed, 29 insertions(+), 29 deletions(-)
+
+diff --git a/edit.c b/edit.c
+index e5a4ba9..72fc1b2 100644
+--- a/edit.c
++++ b/edit.c
+@@ -23,26 +23,6 @@
+ 
+ /* Character insertion */
+ 
+-/* Raw insertion with no undo record.  Used for minibuffer text, which
+- * is not part of any undo history.  Editing a user buffer goes through
+- * selfInsert below, or the mutation layer directly. */
+-void insertChar(struct buffer *bufr, int c, int count) {
+-	if (rejectIfReadOnly(bufr))
+-		return;
+-
+-	bufr->mark_active = 0;
+-
+-	if (count <= 0)
+-		count = 1;
+-
+-	for (int i = 0; i < count; i++) {
+-		int at = bufr->cx;
+-		rowInsertChar(bufr, &bufr->row[bufr->cy], at, c);
+-		adjustAllPoints(bufr, at, bufr->cy, at + 1, bufr->cy, 0);
+-		bufr->cx++;
+-	}
+-}
+-
+ /* Insert 'len' bytes of 'text' 'times' times at point, recording undo,
+  * and leave point after the insertion. */
+ static void insertRepeat(struct buffer *buf, const uint8_t *text, int len,
+@@ -71,8 +51,7 @@ void insertUnicode(int count) {
+ }
+ 
+ /* Insert 'c' 'count' times at point, recording undo.  This is the
+- * undoable typing path; insertChar above is the raw primitive, used
+- * for minibuffer text that is not part of the undo history. */
++ * undoable typing path. */
+ void selfInsert(struct buffer *bufr, int c, int count) {
+ 	if (rejectIfReadOnly(bufr))
+ 		return;
+diff --git a/edit.h b/edit.h
+index 6f27fdc..9f23b61 100644
+--- a/edit.h
++++ b/edit.h
+@@ -6,7 +6,6 @@
+ #include "motion.h"
+ 
+ /* Character insertion */
+-void insertChar(struct buffer *bufr, int c, int count);
+ void selfInsert(struct buffer *bufr, int c, int count);
+ void insertUnicode(int count);
+ 
+diff --git a/prompt.c b/prompt.c
+index 9df8d61..a4871a1 100644
+--- a/prompt.c
++++ b/prompt.c
+@@ -309,7 +309,7 @@ uint8_t *editorPrompt(const char *prompt, enum promptType t,
+ 					if (elen > 0 && !ends_slash) {
+ 						E.minibuf->cx =
+ 							E.minibuf->row[0].size;
+-						insertChar(E.minibuf, '/', 1);
++						selfInsert(E.minibuf, '/', 1);
+ 					}
+ 
+ 					handleMinibufferCompletion(E.minibuf,
+@@ -353,7 +353,7 @@ uint8_t *editorPrompt(const char *prompt, enum promptType t,
+ 				/* A literal TAB is C-q TAB, as in a shell. */
+ 				handleShellCompletion(E.minibuf);
+ 			} else {
+-				insertChar(E.minibuf, '\t', 1);
++				selfInsert(E.minibuf, '\t', 1);
+ 			}
+ 			break;
+ 
+diff --git a/tests/test_edit.c b/tests/test_edit.c
+index 7e6b801..7d1801d 100644
+--- a/tests/test_edit.c
++++ b/tests/test_edit.c
+@@ -13,7 +13,7 @@
+ void test_insert_char_beginning(void) {
+ 	struct buffer *buf = make_test_buffer("BCD");
+ 	buf->cx = 0;
+-	insertChar(buf, 'A', 1);
++	selfInsert(buf, 'A', 1);
+ 	TEST_ASSERT_EQUAL_STRING("ABCD", row_str(buf, 0));
+ 	TEST_ASSERT_EQUAL_INT(1, buf->cx);
+ }
+@@ -21,14 +21,14 @@ void test_insert_char_beginning(void) {
+ void test_insert_char_end(void) {
+ 	struct buffer *buf = make_test_buffer("ABC");
+ 	buf->cx = 3;
+-	insertChar(buf, 'D', 1);
++	selfInsert(buf, 'D', 1);
+ 	TEST_ASSERT_EQUAL_STRING("ABCD", row_str(buf, 0));
+ }
+ 
+ void test_insert_char_with_count(void) {
+ 	struct buffer *buf = make_test_buffer("AE");
+ 	buf->cx = 1;
+-	insertChar(buf, 'B', 3);
++	selfInsert(buf, 'B', 3);
+ 	TEST_ASSERT_EQUAL_STRING("ABBBE", row_str(buf, 0));
+ 	TEST_ASSERT_EQUAL_INT(4, buf->cx);
+ }
+diff --git a/tests/test_undo.c b/tests/test_undo.c
+index 332ffa7..d4810c9 100644
+--- a/tests/test_undo.c
++++ b/tests/test_undo.c
+@@ -8,6 +8,8 @@
+ #include "edit.h"
+ #include "mutate.h"
+ #include "undo.h"
++#include "prompt.h"
++#include "buffer.h"
+ #include "motion.h"
+ #include "transform.h"
+ #include "keymap.h"
+@@ -184,7 +186,8 @@ void test_undo_reports_changed_text(void) {
+ 	mutateInsert(buf, 0, 0, (const uint8_t *)"ab", 2, NULL, NULL);
+ 	buf->cx = 0;
+ 	buf->cy = 0;
+-	insertChar(buf, '\t', 1);
++	rowInsertChar(buf, &buf->row[0], 0, '\t');
++	buf->cx = 1;
+ 
+ 	struct undo *undo = buf->undo;
+ 	TEST_ASSERT_EQUAL_INT(UNDO_MISMATCH, doUndo(buf, 1));
+@@ -192,6 +195,24 @@ void test_undo_reports_changed_text(void) {
+ 	TEST_ASSERT_TRUE(buf->undo == undo);
+ }
+ 
++/* TAB in a prompt is an ordinary edit, so undo in the prompt is exact.
++ * It used to make no record, so undo deleted the wrong bytes. */
++void test_prompt_tab_undoes(void) {
++	initTestEditor();
++	makeMinibuffer();
++	make_test_buffer("x");
++	int keys[] = { 'a', 'b', CTRL('a'), '\t', CTRL('_'), '\r' };
++	scriptKeys(keys, 6);
++	muteStdout();
++	uint8_t *got = editorPrompt("p: ", PROMPT_PLAIN, NULL);
++	unmuteStdout();
++	clearKeys();
++	TEST_ASSERT_EQUAL_STRING("ab", (char *)got);
++	free(got);
++	freeMinibuffer();
++	cleanupTestEditor();
++}
++
+ /* A stale redo entry is reported in the same way. */
+ void test_redo_reports_changed_text(void) {
+ 	struct buffer *buf = make_test_buffer("abc");
+@@ -1147,6 +1168,7 @@ int main(void) {
+ 	RUN_TEST(test_mutate_extend_refuses_wrong_row_count);
+ 	RUN_TEST(test_undo_reports_stale_position);
+ 	RUN_TEST(test_undo_reports_changed_text);
++	RUN_TEST(test_prompt_tab_undoes);
+ 	RUN_TEST(test_redo_reports_changed_text);
+ 	RUN_TEST(test_undo_insert_chars);
+ 	RUN_TEST(test_undo_then_redo);

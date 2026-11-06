@@ -1,7 +1,7 @@
 From 560ad26394486bf87a189fea524ffdea59b3435c Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 07:32:54 +1100
-Subject: [PATCH 1/7] Don't read past the row on a truncated UTF-8 sequence
+Subject: [PATCH 01/10] Don't read past the row on a truncated UTF-8 sequence
 
 C-d and C-t computed a character's end from its lead byte alone, so a
 truncated sequence at the end of a row gave a range past the row.  C-d

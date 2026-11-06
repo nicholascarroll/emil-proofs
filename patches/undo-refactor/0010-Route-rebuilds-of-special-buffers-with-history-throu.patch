@@ -1,0 +1,311 @@
+From b0638c8daca508569ac343f58828243c10294c6b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 6 Nov 2026 12:10:30 +1100
+Subject: [PATCH 10/10] Route rebuilds of special buffers with history through
+ a normal replace
+
+bufferResetRows kept the history, so a special buffer that was made writable,
+edited and rebuilt replayed stale records.  A rebuild is now an ordinary replace
+when the buffer has history, and unchanged when it has none.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01947MBgCkoERXfoyRGfCmQi
+---
+ completion.c      |  3 ++-
+ ctags.c           |  4 +++-
+ mutate.c          | 45 +++++++++++++++++++++++++++++++++++++++++++++
+ mutate.h          | 12 ++++++++++++
+ palette.c         |  4 +++-
+ pipe.c            |  4 +++-
+ register.c        |  7 +++++--
+ tests/test_undo.c | 40 ++++++++++++++++++++++++++++++++++++++++
+ 8 files changed, 113 insertions(+), 6 deletions(-)
+
+diff --git a/completion.c b/completion.c
+index 06d81d0..c0307dc 100644
+--- a/completion.c
++++ b/completion.c
+@@ -259,7 +259,7 @@ static void showCompletionsBuffer(char **matches, int n_matches,
+ 				  enum promptType type) {
+ 	/* Find or create completions buffer */
+ 	struct buffer *comp_buf = findOrCreateSpecialBuffer("*Completions*");
+-	bufferResetRows(comp_buf);
++	struct mutateRebuild rebuild = mutateRebuildBegin(comp_buf);
+ 	comp_buf->read_only = 1;
+ 	comp_buf->word_wrap = 0;
+ 
+@@ -372,6 +372,7 @@ static void showCompletionsBuffer(char **matches, int n_matches,
+ 		free(display);
+ 	}
+ 
++	mutateRebuildEnd(comp_buf, &rebuild);
+ 	showPopupBuffer(comp_buf);
+ 	refreshScreen();
+ }
+diff --git a/ctags.c b/ctags.c
+index 60aabc6..1627d69 100644
+--- a/ctags.c
++++ b/ctags.c
+@@ -6,6 +6,7 @@
+ #include <unistd.h>
+ #include "ctags.h"
+ #include "emil.h"
++#include "mutate.h"
+ #include "message.h"
+ #include "buffer.h"
+ #include "dbuf.h"
+@@ -444,7 +445,7 @@ static int pickMatch(const char *sym, const struct tagMatch *v, int n) {
+ 		scope_cols = TAGS_SCOPE_COLS_MAX;
+ 
+ 	struct buffer *pb = findOrCreateSpecialBuffer(TAGS_MENU_NAME);
+-	bufferResetRows(pb);
++	struct mutateRebuild rebuild = mutateRebuildBegin(pb);
+ 	for (int i = 0; i < n; i++) {
+ 		struct dbuf d = DBUF_INIT;
+ 		int len;
+@@ -453,6 +454,7 @@ static int pickMatch(const char *sym, const struct tagMatch *v, int n) {
+ 		insertRow(pb, i, row, (size_t)len);
+ 		free(row);
+ 	}
++	mutateRebuildEnd(pb, &rebuild);
+ 	pb->read_only = 1;
+ 	pb->word_wrap = 0;
+ 	pb->rectangle_mode = 0;
+diff --git a/mutate.c b/mutate.c
+index f808fee..5351da0 100644
+--- a/mutate.c
++++ b/mutate.c
+@@ -261,3 +261,48 @@ enum mutateResult mutateExtendRows(struct buffer *buf, int from_row,
+ 	markBufferDirty(buf);
+ 	return MUTATE_DONE;
+ }
++
++static uint8_t *wholeText(struct buffer *buf, int *len) {
++	int last = buf->numrows - 1;
++	return collectRegionText(buf, 0, 0, buf->row[last].size, last, len);
++}
++
++struct mutateRebuild mutateRebuildBegin(struct buffer *buf) {
++	struct mutateRebuild r = { NULL, 0 };
++	if (buf->undo != NULL || buf->redo != NULL)
++		r.old_text = wholeText(buf, &r.old_len);
++	bufferResetRows(buf);
++	return r;
++}
++
++void mutateRebuildEnd(struct buffer *buf, struct mutateRebuild *r) {
++	if (r->old_text == NULL)
++		return;
++
++	bufferEnsureRow(buf);
++	int new_len;
++	uint8_t *new_text = wholeText(buf, &new_len);
++
++	/* Put the old rows back, one per newline, then replace them. */
++	bufferResetRows(buf);
++	int start = 0, row = 0;
++	for (int i = 0; i <= r->old_len; i++) {
++		if (i == r->old_len || r->old_text[i] == '\n') {
++			insertRow(buf, row++, &r->old_text[start], i - start);
++			start = i + 1;
++		}
++	}
++
++	int read_only = buf->read_only;
++	int dirty = buf->dirty;
++	int last = buf->numrows - 1;
++	buf->read_only = 0;
++	mutateReplace(buf, 0, 0, buf->row[last].size, last, new_text, new_len,
++		      0, NULL, NULL);
++	buf->read_only = read_only;
++	buf->dirty = dirty;
++
++	free(new_text);
++	free(r->old_text);
++	r->old_text = NULL;
++}
+diff --git a/mutate.h b/mutate.h
+index 16326ef..8350d8d 100644
+--- a/mutate.h
++++ b/mutate.h
+@@ -28,6 +28,18 @@ enum mutateResult {
+ 	MUTATE_INVALID, /* no such range: nothing changed, and reported */
+ };
+ 
++/* Rebuilding a special buffer's contents (*Completions*, register
++ * views, and so on): call Begin instead of bufferResetRows, fill the
++ * rows, then call End.  A buffer with no history just gets its new rows.
++ * One with history (made writable and edited) gets the change as an
++ * ordinary replace, so its history still matches its text. */
++struct mutateRebuild {
++	uint8_t *old_text; /* NULL when there is no history */
++	int old_len;
++};
++struct mutateRebuild mutateRebuildBegin(struct buffer *buf);
++void mutateRebuildEnd(struct buffer *buf, struct mutateRebuild *r);
++
+ /* Delete text in [startx,starty]..[endx,endy], insert 'repl' at
+  * (startx,starty).  Either the delete range or repl may be empty
+  * (pure insert or pure delete).  Records a paired undo
+diff --git a/palette.c b/palette.c
+index 8559b16..4be52d2 100644
+--- a/palette.c
++++ b/palette.c
+@@ -4,6 +4,7 @@
+ #include "display.h"
+ #include "edit.h"
+ #include "emil.h"
++#include "mutate.h"
+ #include "message.h"
+ #include "keymap.h"
+ #include "motion.h"
+@@ -256,7 +257,7 @@ const int palette_size = sizeof(palette) / sizeof(palette[0]);
+ /* Populate the palette buffer: every entry's utf8[] with a trailing
+ space.  PALETTE_BREAK entries contain '\n'. */
+ static void populatePaletteBuffer(struct buffer *buf) {
+-	bufferResetRows(buf);
++	struct mutateRebuild rebuild = mutateRebuildBegin(buf);
+ 	buf->read_only = 0;
+ 	uint8_t flat[4096];
+ 	int len = 0;
+@@ -274,6 +275,7 @@ static void populatePaletteBuffer(struct buffer *buf) {
+ 	/* Load into buffer rows.  No BLOB_FINAL_NL: the palette's last
+ 	 * category is a row of glyphs, not a terminated line. */
+ 	bufferLoadBlob(buf, flat, (size_t)len, 0);
++	mutateRebuildEnd(buf, &rebuild);
+ 	buf->read_only = 1;
+ }
+ 
+diff --git a/pipe.c b/pipe.c
+index f42c85b..b08985f 100644
+--- a/pipe.c
++++ b/pipe.c
+@@ -32,6 +32,7 @@
+ #include "buffer.h"
+ #include "dbuf.h"
+ #include "emil.h"
++#include "mutate.h"
+ #include "display.h"
+ #include "message.h"
+ #include "fileio.h"
+@@ -485,7 +486,7 @@ uint8_t *editorPipe(int useRegion) {
+ static void showOutputBuffer(const char *name, const uint8_t *data, size_t len,
+ 			     int read_only) {
+ 	struct buffer *buf = findOrCreateSpecialBuffer(name);
+-	bufferResetRows(buf);
++	struct mutateRebuild rebuild = mutateRebuildBegin(buf);
+ 	buf->cx = 0;
+ 	buf->cy = 0;
+ 	buf->markx = -1;
+@@ -495,6 +496,7 @@ static void showOutputBuffer(const char *name, const uint8_t *data, size_t len,
+ 		buf->read_only = 1;
+ 
+ 	bufferLoadBlob(buf, data, len, 0);
++	mutateRebuildEnd(buf, &rebuild);
+ 	if (len > 0)
+ 		markBufferDirty(buf);
+ 	updateBuffer(buf);
+diff --git a/register.c b/register.c
+index 99e8aed..4470595 100644
+--- a/register.c
++++ b/register.c
+@@ -5,6 +5,7 @@
+ #include "message.h"
+ #include "prompt.h"
+ #include "emil.h"
++#include "mutate.h"
+ 
+ #include "region.h"
+ #include "unicode.h"
+@@ -85,7 +86,7 @@ static void formatRegName(char *out, size_t outsz, int reg) {
+ 
+ static void showRegisterPreview(void) {
+ 	struct buffer *prev = findOrCreateSpecialBuffer("*Register Preview*");
+-	bufferResetRows(prev);
++	struct mutateRebuild rebuild = mutateRebuildBegin(prev);
+ 	prev->read_only = 1;
+ 	prev->word_wrap = 0;
+ 
+@@ -151,6 +152,7 @@ static void showRegisterPreview(void) {
+ 		insertRow(prev, 0, (const uint8_t *)"(no registers set)", 18);
+ 
+ 	bufferEnsureRow(prev);
++	mutateRebuildEnd(prev, &rebuild);
+ 	showPopupBuffer(prev);
+ }
+ 
+@@ -164,7 +166,7 @@ static void showRegisterOutput(int reg) {
+ 	formatRegName(name, sizeof(name), reg);
+ 
+ 	struct buffer *out = findOrCreateSpecialBuffer("*Output*");
+-	bufferResetRows(out);
++	struct mutateRebuild rebuild = mutateRebuildBegin(out);
+ 	out->read_only = 1;
+ 	out->word_wrap = 0;
+ 
+@@ -221,6 +223,7 @@ static void showRegisterOutput(int reg) {
+ 	}
+ 
+ 	bufferEnsureRow(out);
++	mutateRebuildEnd(out, &rebuild);
+ 	showPopupBuffer(out);
+ }
+ 
+diff --git a/tests/test_undo.c b/tests/test_undo.c
+index d4810c9..271fdce 100644
+--- a/tests/test_undo.c
++++ b/tests/test_undo.c
+@@ -213,6 +213,44 @@ void test_prompt_tab_undoes(void) {
+ 	cleanupTestEditor();
+ }
+ 
++/* A rebuilt buffer with no history just gets its new rows. */
++void test_rebuild_without_history_no_record(void) {
++	struct buffer *buf = make_test_buffer("old");
++	buf->read_only = 1;
++	struct mutateRebuild r = mutateRebuildBegin(buf);
++	insertRow(buf, 0, (const uint8_t *)"new", 3);
++	mutateRebuildEnd(buf, &r);
++	TEST_ASSERT_EQUAL_STRING("new", row_str(buf, 0));
++	TEST_ASSERT_TRUE(buf->undo == NULL);
++	TEST_ASSERT_EQUAL_INT(1, buf->read_only);
++}
++
++/* With history, the rebuild is an ordinary replace: undoing it gets the
++ * old text back, and the earlier history still works. */
++void test_rebuild_with_history_is_an_edit(void) {
++	const char *lines[] = { "a long line of text", "" };
++	struct buffer *buf = make_test_buffer_lines(lines, 2);
++	mutateInsert(buf, 15, 0, (const uint8_t *)"x", 1, NULL, NULL);
++
++	struct mutateRebuild r = mutateRebuildBegin(buf);
++	buf->read_only = 1;
++	insertRow(buf, 0, (const uint8_t *)"short", 5);
++	insertRow(buf, 1, (const uint8_t *)"", 0);
++	mutateRebuildEnd(buf, &r);
++
++	TEST_ASSERT_EQUAL_STRING("short", row_str(buf, 0));
++	TEST_ASSERT_EQUAL_INT(2, buf->numrows);
++	TEST_ASSERT_EQUAL_INT(1, buf->read_only);
++
++	buf->read_only = 0;
++	TEST_ASSERT_EQUAL_INT(UNDO_DONE, doUndo(buf, 1));
++	TEST_ASSERT_EQUAL_STRING("a long line of xtext", row_str(buf, 0));
++	TEST_ASSERT_EQUAL_INT(UNDO_DONE, doUndo(buf, 1));
++	TEST_ASSERT_EQUAL_STRING("a long line of text", row_str(buf, 0));
++	TEST_ASSERT_EQUAL_INT(UNDO_DONE, doRedo(buf, 2));
++	TEST_ASSERT_EQUAL_STRING("short", row_str(buf, 0));
++}
++
+ /* A stale redo entry is reported in the same way. */
+ void test_redo_reports_changed_text(void) {
+ 	struct buffer *buf = make_test_buffer("abc");
+@@ -1169,6 +1207,8 @@ int main(void) {
+ 	RUN_TEST(test_undo_reports_stale_position);
+ 	RUN_TEST(test_undo_reports_changed_text);
+ 	RUN_TEST(test_prompt_tab_undoes);
++	RUN_TEST(test_rebuild_without_history_no_record);
++	RUN_TEST(test_rebuild_with_history_is_an_edit);
+ 	RUN_TEST(test_redo_reports_changed_text);
+ 	RUN_TEST(test_undo_insert_chars);
+ 	RUN_TEST(test_undo_then_redo);

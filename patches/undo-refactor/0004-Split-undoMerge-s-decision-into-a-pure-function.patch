@@ -1,7 +1,7 @@
 From da381960e2c7e618869b7c6937311f9f73f3f8ba Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 6 Nov 2026 07:40:08 +1100
-Subject: [PATCH 4/7] Split undoMerge's decision into a pure function
+Subject: [PATCH 04/10] Split undoMerge's decision into a pure function
 
 undoMergeDecision only reads its arguments and is tested directly.  The
 data handling stays in a static apply step.  No behaviour change.

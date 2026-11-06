@@ -12,7 +12,7 @@ MODEL = [
  ("redo doesn't carry point",  '(redo-rest (redo-step st) (adj-x a) (adj-y a))', '(prog2$ a (redo-rest (redo-step st) px py))'),
  ("delete ignores chain",      'old co (and chain t)', 'old co nil'),
  ("final newline delete allowed", ':final-newline)\n          (t nil)', 'nil)\n          (t nil)'),
- ("burst ignored",             '(uncapped (and co burst))', '(uncapped nil)'),
+ ("burst ignored",             '(uncapped (and co burst))', '(uncapped (and burst nil))'),
  ("undo leaves run open (expected equivalent)", ':undo (close-run (cdr undo))', ':undo (cdr undo)'),
  ("merge ignores append flag", '(cond ((not (access undo-rec prev :app)) :none)', '(cond ((not t) :none)'),
  ("edit keeps redo",           ':text tx :undo undo :redo nil))', ':text tx :undo undo))'),
