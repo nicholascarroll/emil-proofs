@@ -41,7 +41,7 @@ Proving this was the first experiment with this approach, and it concluded that 
 testing was enough for that kind of function. Its verdict is in
 [`docs/verdict.md`](../../blob/milestone-3/docs/verdict.md).
 
-it proves that in its model active cursor always lands in the right place. 
+it proves that in its model the active cursor always lands in the right place. 
 It doesn't prove that the parked cursor positions in other windows are being moved to the right position.
 
 # other important areas for correctness in emil
