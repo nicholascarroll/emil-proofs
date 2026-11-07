@@ -3,7 +3,7 @@
 Proofs about the [emil](https://github.com/nicholascarroll/emil) text editor
 using the [ACL2](https://www.cs.utexas.edu/~moore/acl2/) prover.
 
-## The undo system is proven correct
+## The Undo System
 
 On the [`undo-model`](../../tree/undo-model) branch, four properties of emil's
 undo and redo are proved for **every** sequence of edits, undos and redos, of
@@ -36,7 +36,7 @@ Each branch builds on the one before, so `undo-model` contains everything.
 | [`milestone-3`](../../tree/milestone-3) | `adjustPoint` proofs, ATC-generated C, comparison with emil's C, and the pilot's verdict |
 | [`undo-model`](../../tree/undo-model) | The undo model, the four proofs above, and the emil patches |
 
-# adjustPoint is proven correct
+# adjustPoint
 Proving this was the first experiment with this approach, and it concluded that strong
 testing was enough for that kind of function. Its verdict is in
 [`docs/verdict.md`](../../blob/milestone-3/docs/verdict.md).
