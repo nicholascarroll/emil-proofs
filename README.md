@@ -45,7 +45,7 @@ it proves the active cursor always lands in the right place, but it doesn't prov
 
 # other important areas for correctness in emil
 Some of these might be done in future:
-- unicode.c: this was proven in an earlier comment with [CBMC](https://www.cprover.org/cbmc/) 
+- unicode.c: this was proven in an earlier commit with [CBMC](https://www.cprover.org/cbmc/) 
 - Memory safety, especially the use of int for sizes and capacities. This has not been done but would be nice.
 - A guarantee that rendered text is always sanitised so that that malicious file content cannot send commands to the terminal
 
