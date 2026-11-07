@@ -1,7 +1,7 @@
 # emil-proofs
 
 Proofs about the [emil](https://github.com/nicholascarroll/emil) text editor
-using the ACL2 prover.
+using the [ACL2](https://www.cs.utexas.edu/~moore/acl2/) prover.
 
 ## The undo system is proven correct
 
@@ -44,10 +44,10 @@ testing was enough for that kind of function. Its verdict is in
 it proves the active cursor always lands in the right place, but it doesn't prove that the parked cursor positions in other windows are being moved to the right position.
 
 # other important areas for correctness in emil
-some of these might be done in future
-- unicode.c: this was proven in an earlier comment with CMBC 
+Some of these might be done in future:
+- unicode.c: this was proven in an earlier comment with [CBMC](https://www.cprover.org/cbmc/) 
 - Memory safety, especially the use of int for sizes and capacities. This has not been done but would be nice.
-- A guarantee that Reed text is always sanitised so that that malicious file content cannot send commands to the terminal
+- A guarantee that rendered text is always sanitised so that that malicious file content cannot send commands to the terminal
 
 ## Licence
 
