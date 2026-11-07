@@ -44,9 +44,9 @@ testing was enough for that kind of function. Its verdict is in
 it proves the active cursor always lands in the right place, but it doesn't prove that the parked cursor positions in other windows are being moved to the right position.
 
 # other important areas for correctness in emil
-Some of these might be done in future:
+These are *not* planned to be proven with ACL2:
 - unicode.c: this was proven in an earlier commit with [CBMC](https://www.cprover.org/cbmc/) 
-- Memory safety, especially the use of int for sizes and capacities. This has not been done but would be nice.
+- Memory safety, especially the use of int for sizes and capacities.
 - A guarantee that rendered text is always sanitised so that that malicious file content cannot send commands to the terminal
 
 ## Licence
